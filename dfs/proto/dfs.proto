@@ -1,0 +1,172 @@
+syntax = "proto3";
+option go_package = "./messages";
+
+/* ------------ Controller messages ------------ */
+message JoinRes {
+    bool accept = 1;
+    string node_id = 2;
+}
+
+message KillNode {
+    bool kill = 1;
+}
+
+message NodeList {
+    repeated string nodes = 1;
+}
+
+message CStorageRes {
+    bool ok = 1;
+    string message = 2;
+    map<string, string> chunk_map = 3;
+    map<string, NodeList> replica_nodes = 4;
+}
+
+message CRetrievalRes {
+    bool ok = 1;
+    string message = 2;
+    map<string, string> chunk_map = 3;
+}
+
+message ReplicaOrder {
+    string filename = 1;
+    string chunkname = 2;
+    int64 chunksize = 3;
+    repeated string replica_nodes = 4;
+}
+
+message ReplicaRes {
+    bool ok = 1;
+    string node_id = 2;
+    string node_addr = 3;
+}
+
+message ListRes {
+    repeated string filenames = 1;
+}
+
+message NodesRes {
+    uint64 disk_space = 1;
+    map<string, int64> node_reqs = 2;
+}
+
+message DeleteRes {
+    bool ok = 1;
+    string message = 2;
+}
+
+/* ------------ Node messages ------------ */
+message JoinReq {
+    string node_addr = 1;
+    uint64 disk_space = 2;
+}
+
+message ChunkList {
+    repeated string chunks = 1;
+}
+
+message Heartbeat {
+    string node_id = 1;
+    uint64 disk_space = 2;
+    int64 requests = 3;
+    map<string, ChunkList> new_chunks = 4;
+}
+
+message NStorageRes {
+    bool ok = 1;
+    string message = 2;
+}
+
+message NRetrievalRes {
+    bool ok = 1;
+    string message = 2;
+    int64 chunk_size = 3;
+}
+
+message OrderRes {
+    bool ok = 1;
+    string message = 2;
+}
+
+message ReplicaReq {
+    string node_id = 1;
+    string filename = 2;
+    string chunkname = 3;
+}
+
+/* ------------ Client messages ------------ */
+message CStorageReq {
+    string filename = 1;
+    int64 filesize = 2;
+    map<string, int64> chunk_sizes = 3;
+}
+
+message NStorageReq {
+    string filename = 1;
+    string chunkname = 2;
+    int64 chunksize = 3;
+    repeated string replica_nodes = 4;
+}
+
+message CRetrievalReq {
+    string filename = 1;
+}
+
+message NRetrievalReq {
+    string filename = 1;
+    string chunkname = 2;
+    bool checksum = 3;
+}
+
+message ListReq {
+    bool ls = 1;
+}
+
+message NodesReq {
+    bool nodes = 1;
+}
+message DeleteReq {
+    string filename = 1;
+}
+
+/* ------------ Checksum messages ------------ */
+message Checksum {
+    bytes md5 = 1;
+}
+
+message ChecksumRes {
+    bool ok = 1;
+    string message = 2;
+}
+
+message Wrapper {
+    oneof msg {
+        JoinRes join_res = 1;
+        KillNode kill_node = 2;
+        CStorageRes c_storage_res = 3;
+        CRetrievalRes c_retrieval_res = 4;
+        ReplicaOrder replica_order = 5;
+        ReplicaRes replica_res = 6;
+        ListRes list_res = 7;
+        NodesRes nodes_res = 8;
+        DeleteRes delete_res = 9;        
+
+        JoinReq join_req = 10;
+        Heartbeat heartbeat = 11;
+        NStorageRes n_storage_res = 12;
+        NRetrievalRes n_retrieval_res = 13;
+        OrderRes order_res = 14;
+        ReplicaReq replica_req = 15;
+
+        CStorageReq c_storage_req = 16;
+        NStorageReq n_storage_req = 17;
+        CRetrievalReq c_retrieval_req = 18;
+        NRetrievalReq n_retrieval_req = 19;
+        ListReq list_req = 20;
+        NodesReq nodes_req = 21;
+        DeleteReq delete_req = 22;
+
+        Checksum md5 = 23;
+        ChecksumRes checksum_res = 24;
+    }
+}

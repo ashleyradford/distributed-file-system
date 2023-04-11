@@ -1,0 +1,53 @@
+Controller messages:
+    JoinRes
+    KillNode
+    StorageRes
+    RetrievalRes
+    ReplicaOrder
+    ReplicaRes
+    ListRes
+    NodeRes
+    DeleteRes
+
+Node Messages:
+    JoinReq
+    Heartbeat
+    StorageRes
+    RetrievalRes
+    OrderRes
+    ReplicaReq
+    StorageReq
+    RetrievalReq
+    Checksum
+    ChecksumRes
+
+Client Messages:
+    StorageReq x2
+    RetrievalReq x2
+    ListReq
+    NodeReq
+    DeleteReq
+    Checksum
+
+Current Features:
+- Storage nodes can join controller
+- Controller can check which nodes are alive
+- Storage nodes can send heartbeats
+- Storage nodes are able to rejoin if they time out
+- Client can request info about remaining space and node requests completed
+- Client can request info about which files are stored in node
+- Client can store, retrieve and delete files
+- Contoller can request new copies of chunks on a dead node
+- Storage nodes can request new copies of corrupted chunks
+
+ilovecats.txt :	chunk01 : {node03, node02, node01}
+                          chunk02 : {node02, node03, node04}
+                          chunk03 : {node01, node03, node04}
+
+CASES THAT INVOLVE FAULT TOLERANCE
+1) node01 declared as dead...need to find all the chunks that are stored in node01 and delete
+2) checking replication level...need to check
+      a) number of nodes < replication level, if so
+      b) need to check that status is completed, if not
+      c) need to check that hasvnt been in pending since timeout (to combat against reps that never made it)
+3) file is corrupted, node requests a replica from controller who gives it a buddy to get it from
