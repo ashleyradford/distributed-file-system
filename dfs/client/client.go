@@ -23,106 +23,129 @@ var m = sync.RWMutex{}
 
 const DEST = "/bigdata/students/aeradford/retrieval"
 
-type chunkData struct {
-	offset   int64
-	size     int64
-	contents []byte
+type nodeConn struct {
+	handler *messages.MessageHandler
+	channel chan chunkData
 }
 
-func splitFile(filepath string, filesize int64, chunksize uint64) (chunkMap map[string]*chunkData) {
+type chunkData struct {
+	filename     string
+	chunkname    string
+	size         int64
+	replicaNodes []string
+	contents     []byte
+}
+
+func makeChunkMap(filename string, filesize int64, chunksize int64) (chunkMap map[string]int64) {
+	// initialize chunk data map
+	chunkMap = make(map[string]int64)
+
+	numChunks := int(math.Ceil(float64(filesize) / float64(chunksize)))
+	log.Printf("Number of chunks: %d", numChunks)
+
+	offset := int64(0)
+	remainingBytes := filesize
+
+	// add chunk names to map
+	for i := 0; i < numChunks; i++ {
+		chunkname := fmt.Sprintf("%s_chunk%d", filename, offset)
+		chunkMap[chunkname] = int64(math.Min(float64(chunksize), float64(remainingBytes)))
+
+		offset += chunksize
+		remainingBytes -= chunksize
+	}
+
+	return chunkMap
+}
+
+func readFile(filepath string, filename string, chunkSize map[string]int64, chunkDest map[string]string,
+	replicaNodes map[string]*messages.NodeList, connMap map[string]nodeConn) {
+
 	// open and read in file
 	file, err := os.Open(filepath)
 	if err != nil {
-		log.Fatalln(err)
+		log.Println(err)
 	}
 	defer file.Close()
 
-	// get filename
-	filename := path.Base(os.Args[3])
-
-	// create chunk data map
-	chunkMap = make(map[string]*chunkData)
-
 	// create a buffer to hold the read bytes
-	numChunks := 0
 	offset := 0
 	for {
+		// check if chunk exists
+		chunkname := fmt.Sprintf("%s_chunk%d", filename, offset)
+		chunksize, ok := chunkSize[chunkname]
+		if !ok {
+			break
+		}
+
+		// set up chunk data
 		var chunk *chunkData = new(chunkData)
-		buf := make([]byte, chunksize)
+		chunk.filename = filename
+		chunk.chunkname = chunkname
+		chunk.size = chunksize
+		chunk.replicaNodes = replicaNodes[chunkname].Nodes
+
+		// read in data
+		buf := make([]byte, chunk.size)
 		bytesRead, err := file.Read(buf) // can only read up to 1GB ??
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				break
 			}
-			log.Fatalln(err)
+			log.Println(err)
 		}
 
 		// log.Printf("Bytes read: %d\n", bytesRead)
-		chunk.offset = int64(offset)
-		chunk.size = int64(bytesRead)
 		chunk.contents = buf[0:bytesRead]
 
-		chunkname := fmt.Sprintf("%s_chunk%d", filename, offset)
-		chunkMap[chunkname] = chunk
+		// send data to channel for specified destination
+		nodeDest := chunkDest[chunk.chunkname]
+		// log.Printf("Sending chunk: %s to: %s", chunk.chunkname, nodeDest)
+		connMap[nodeDest].channel <- *chunk
 
 		offset += bytesRead
-		numChunks += 1
 	}
-
-	log.Printf("Number of chunks: %d", numChunks)
-
-	return chunkMap
 }
 
-func sendDataToNode(filename string, chunkname string, nodeAddr string,
-	replicaNodes []string, chunkStruct *chunkData, results chan bool) {
+func sendDataToNode(msgHandler *messages.MessageHandler, chunkStream chan chunkData, results chan bool) {
+	for {
+		// receive data from the dataStream channel specific to this connection
+		chunkStruct := <-chunkStream
 
-	// open up a tcp connection with specified node
-	conn, err := net.Dial("tcp", nodeAddr)
-	if err != nil {
-		log.Println(err)
-		results <- false
-		return
+		// send storage req to specified node
+		msgHandler.SendStorageReqN(chunkStruct.filename, chunkStruct.chunkname,
+			chunkStruct.size, chunkStruct.replicaNodes)
+
+		// wait for storage node response
+		wrapper, _ := msgHandler.Receive()
+		response := wrapper.GetNStorageRes()
+		if !response.Ok {
+			log.Printf("Chunk: %s: %s", chunkStruct.chunkname, response.Message)
+			results <- false
+			return
+		}
+
+		// okay to send file contents
+		md5 := md5.New()
+		w := io.MultiWriter(msgHandler, md5)
+		io.CopyN(w, bytes.NewReader(chunkStruct.contents), chunkStruct.size)
+
+		// send client checksum
+		checksum := md5.Sum(nil)
+		msgHandler.SendChecksum(checksum)
+
+		// get final response from storage node
+		wrapper, _ = msgHandler.Receive()
+		checksumResponse := wrapper.GetChecksumRes()
+		if !checksumResponse.Ok {
+			results <- false
+			return
+		}
+
+		// add success status to channel
+		// log.Printf("Finished sending chunk data for chunk: %s", chunkStruct.chunkname)
+		results <- true
 	}
-
-	// log.Printf("Successfully connected to %s to store %s\n", nodeAddr, chunkname)
-	msgHandler := messages.NewMessageHandler(conn)
-
-	// send storage req to specified node
-	msgHandler.SendStorageReqN(filename, chunkname, chunkStruct.size, replicaNodes)
-
-	// wait for storage node response
-	wrapper, _ := msgHandler.Receive()
-	response := wrapper.GetNStorageRes()
-	if !response.Ok {
-		fmt.Println(response.Message)
-		results <- false
-		return
-	}
-
-	// okay to send file contents
-	md5 := md5.New()
-	w := io.MultiWriter(msgHandler, md5)
-	io.CopyN(w, bytes.NewReader(chunkStruct.contents), chunkStruct.size)
-
-	// send client checksum
-	checksum := md5.Sum(nil)
-	msgHandler.SendChecksum(checksum)
-
-	// get final response from storage node
-	wrapper, _ = msgHandler.Receive()
-	checksumResponse := wrapper.GetChecksumRes()
-	if !checksumResponse.Ok {
-		results <- false
-		return
-	}
-
-	// add success status to channel
-	results <- true
-
-	// close message handler and connection
-	msgHandler.Close()
-	conn.Close()
 }
 
 func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *os.File, results chan bool) {
@@ -144,7 +167,7 @@ func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *
 	wrapper, _ := msgHandler.Receive()
 	response := wrapper.GetNRetrievalRes()
 	if !response.Ok {
-		fmt.Println(response.Message)
+		log.Println(response.Message)
 		results <- false
 		return
 	}
@@ -153,7 +176,7 @@ func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *
 	re := regexp.MustCompile(`.*_chunk(\d+)`)
 	offset, err := strconv.Atoi(re.FindStringSubmatch(chunkname)[1])
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 		results <- false
 		return
 	}
@@ -162,7 +185,7 @@ func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *
 	m.Lock()
 	_, err = file.Seek(int64(offset), 0)
 	if err != nil {
-		log.Fatal(err)
+		log.Println(err)
 		results <- false
 		return
 	}
@@ -191,7 +214,7 @@ func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *
 }
 
 /* ------ Client Actions ------ */
-func storeFile(msgHandler *messages.MessageHandler, filepath string, chunksize uint64) {
+func storeFile(msgHandler *messages.MessageHandler, filepath string, chunksize int64) {
 	// get file size and check if it exists
 	info, err := os.Stat(filepath)
 	if err != nil {
@@ -200,17 +223,9 @@ func storeFile(msgHandler *messages.MessageHandler, filepath string, chunksize u
 	}
 	filesize := int64(info.Size())
 
-	// create chunk data map and { chunk : size } map (for requests)
-	chunkDataMap := splitFile(filepath, filesize, chunksize)
-	chunkSizeMap := make(map[string]int64)
-
-	// fill in chunkSizeMap for controller request
-	for chunkname, data := range chunkDataMap {
-		chunkSizeMap[chunkname] = data.size
-	}
-
 	// send filename and chunk size map to controller
 	filename := path.Base(filepath)
+	chunkSizeMap := makeChunkMap(filename, filesize, chunksize)
 	msgHandler.SendStorageReqC(filename, filesize, chunkSizeMap)
 
 	// wait for response from controller
@@ -221,13 +236,36 @@ func storeFile(msgHandler *messages.MessageHandler, filepath string, chunksize u
 		return
 	}
 
-	// for each main chunk : node mapping, open a connection and send that data over
+	// start up node connections and add to addr map
+	connMap := make(map[string]nodeConn)
+	for _, nodeAddr := range response.Nodes {
+		// open up a tcp connection with specified node
+		conn, err := net.Dial("tcp", nodeAddr)
+		if err != nil {
+			log.Println(err)
+			return
+		}
+		defer conn.Close()
+
+		log.Printf("Successfully connected to %s\n", nodeAddr)
+		msgHandler := messages.NewMessageHandler(conn)
+		defer msgHandler.Close()
+
+		// add handler and channel to map
+		connMap[nodeAddr] = nodeConn{
+			handler: msgHandler,
+			channel: make(chan chunkData),
+		}
+	}
+
+	// start a goroutine to send data to each connection
 	numChunks := len(response.ChunkMap)
 	results := make(chan bool, numChunks)
-	for chunkname, nodeAddr := range response.ChunkMap {
-		replicaNodes := response.ReplicaNodes[chunkname]
-		go sendDataToNode(filename, chunkname, nodeAddr, replicaNodes.Nodes, chunkDataMap[chunkname], results)
+	for addr := range connMap {
+		go sendDataToNode(connMap[addr].handler, connMap[addr].channel, results)
 	}
+
+	readFile(filepath, filename, chunkSizeMap, response.ChunkMap, response.ReplicaNodes, connMap)
 
 	// check that all non-replica chunks (aka the first node addr) got sent succesfully
 	var failed bool
@@ -303,7 +341,7 @@ func retrieveFile(msgHandler *messages.MessageHandler, filename string, dest str
 		md5Hash := md5.New()
 		_, err = io.Copy(md5Hash, file)
 		if err != nil {
-			log.Fatal(err)
+			log.Println(err)
 		}
 
 		fmt.Printf("%s: %x\n", filename, md5Hash.Sum(nil))
@@ -390,7 +428,7 @@ func main() {
 	hostAddr := os.Args[1]
 	conn, err := net.Dial("tcp", hostAddr)
 	if err != nil {
-		log.Fatalln(err)
+		log.Println(err)
 		return
 	}
 	defer conn.Close()
@@ -400,12 +438,12 @@ func main() {
 	switch action {
 	case "put":
 		// set chunk size
-		var chunksize uint64
+		var chunksize int64
 		if len(os.Args) == 5 {
 			val, _ := strconv.ParseFloat(os.Args[4], 64)
-			chunksize = uint64(val * math.Pow(2, 20)) // convert from MB to bytes
+			chunksize = int64(val * math.Pow(2, 20)) // convert from MB to bytes
 		} else {
-			chunksize = uint64(math.Pow(2, 20)) // 1MB default chunk size
+			chunksize = int64(math.Pow(2, 20)) // 1MB default chunk size
 		}
 
 		if len(os.Args) > 5 {

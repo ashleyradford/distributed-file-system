@@ -18,8 +18,9 @@ message NodeList {
 message CStorageRes {
     bool ok = 1;
     string message = 2;
-    map<string, string> chunk_map = 3;
-    map<string, NodeList> replica_nodes = 4;
+    repeated string nodes = 3;
+    map<string, string> chunk_map = 4;
+    map<string, NodeList> replica_nodes = 5;
 }
 
 message CRetrievalRes {

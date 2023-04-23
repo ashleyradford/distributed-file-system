@@ -149,10 +149,10 @@ func (m *MessageHandler) SendStorageReqC(filename string, filesize int64, chunkS
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendStorageResC(ok bool, message string, chunkMap map[string]string,
+func (m *MessageHandler) SendStorageResC(ok bool, message string, nodes []string, chunkMap map[string]string,
 	replicaNodes map[string][]string) error {
 
-	msg := CStorageRes{Ok: ok, Message: message, ChunkMap: chunkMap, ReplicaNodes: make(map[string]*NodeList)}
+	msg := CStorageRes{Ok: ok, Message: message, Nodes: nodes, ChunkMap: chunkMap, ReplicaNodes: make(map[string]*NodeList)}
 
 	// add node list to map
 	for chunk := range replicaNodes {

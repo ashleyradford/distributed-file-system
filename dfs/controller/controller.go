@@ -144,19 +144,19 @@ func receiveStorageRequest(msgHandler *messages.MessageHandler, storeReq *messag
 	// first check if file already exists
 	_, ok := controller.fileMap[storeReq.Filename]
 	if ok {
-		msgHandler.SendStorageResC(false, "Error: file already exists", nil, nil)
+		msgHandler.SendStorageResC(false, "Error: file already exists", nil, nil, nil)
 		return
 	}
 
 	// then check if there are enough nodes for the replication level
 	if len(controller.nodeMap) < util.REPLICAS {
-		msgHandler.SendStorageResC(false, "Error: not enough nodes for replication level", nil, nil)
+		msgHandler.SendStorageResC(false, "Error: not enough nodes for replication level", nil, nil, nil)
 		return
 	}
 
 	// then check if there is enough space in disk (doesn't check chunk spaces tho)
 	if uint64(storeReq.Filesize) > controller.totalDiskSpace {
-		msgHandler.SendStorageResC(false, "Error: not enough space in cluster", nil, nil)
+		msgHandler.SendStorageResC(false, "Error: not enough space in cluster", nil, nil, nil)
 		return
 	}
 
@@ -166,6 +166,9 @@ func receiveStorageRequest(msgHandler *messages.MessageHandler, storeReq *messag
 	// create maps for response
 	chunkMap := make(map[string]string)
 	replicaNodes := make(map[string][]string)
+
+	// create node set for response
+	nodeConns := make(map[string]bool)
 
 	// want to randomly select chunks
 	rand.Seed(time.Now().UnixNano())
@@ -204,14 +207,21 @@ func receiveStorageRequest(msgHandler *messages.MessageHandler, storeReq *messag
 			if !mainFlag {
 				chunkMap[chunkname] = controller.nodeMap[node].addr // main nodes
 				mainFlag = true
+				nodeConns[controller.nodeMap[node].addr] = true // only add main node connections
 			} else {
 				replicaNodes[chunkname] = append(replicaNodes[chunkname], controller.nodeMap[node].addr)
 			}
 		}
 	}
 
+	// get list of node connections that need to be opened
+	nodeList := []string{}
+	for nodeAddr := range nodeConns {
+		nodeList = append(nodeList, nodeAddr)
+	}
+
 	// send { chunk : node } and { chunk : replicas } mappings back to client
-	msgHandler.SendStorageResC(true, "", chunkMap, replicaNodes)
+	msgHandler.SendStorageResC(true, "", nodeList, chunkMap, replicaNodes)
 }
 
 func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retreiveReq *messages.CRetrievalReq,
