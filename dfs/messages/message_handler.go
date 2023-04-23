@@ -221,8 +221,14 @@ func (m *MessageHandler) SendRetrievalReqC(filename string) error {
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendRetrievalResC(ok bool, message string, chunkMap map[string]string) error {
-	msg := CRetrievalRes{Ok: ok, Message: message, ChunkMap: chunkMap}
+func (m *MessageHandler) SendRetrievalResC(ok bool, message string, numChunks int64, nodeChunks map[string][]string) error {
+	msg := CRetrievalRes{Ok: ok, Message: message, NumChunks: numChunks, NodeChunks: make(map[string]*NodeList)}
+
+	// add node list to map
+	for chunk := range nodeChunks {
+		msg.NodeChunks[chunk] = &NodeList{Nodes: nodeChunks[chunk]}
+	}
+
 	wrapper := &Wrapper{
 		Msg: &Wrapper_CRetrievalRes{CRetrievalRes: &msg},
 	}

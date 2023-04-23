@@ -148,7 +148,7 @@ func sendDataToNode(msgHandler *messages.MessageHandler, chunkStream chan chunkD
 	}
 }
 
-func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *os.File, results chan bool) {
+func retrieveChunks(filename string, nodeAddr string, chunknames []string, file *os.File, results chan bool) {
 	// open up a tcp connection with specified node
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
@@ -157,9 +157,19 @@ func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *
 		return
 	}
 
-	// log.Printf("Successfully connected to %s for retrieval\n", nodeAddr)
+	log.Printf("Successfully connected to %s for retrieval\n", nodeAddr)
 	msgHandler := messages.NewMessageHandler(conn)
 
+	for _, chunk := range chunknames {
+		getChunkFromNode(msgHandler, filename, chunk, file, results)
+	}
+
+	// close message handler and connection
+	msgHandler.Close()
+	conn.Close()
+}
+
+func getChunkFromNode(msgHandler *messages.MessageHandler, filename string, chunkname string, file *os.File, results chan bool) {
 	// send storage req to specified node
 	msgHandler.SendRetrievalReqN(filename, chunkname, true)
 
@@ -207,10 +217,6 @@ func getChunkFromNode(filename string, chunkname string, nodeAddr string, file *
 		log.Printf("Invalid chunk checksum: %s\n", chunkname)
 		results <- false
 	}
-
-	// close message handler and connection
-	msgHandler.Close()
-	conn.Close()
 }
 
 /* ------ Client Actions ------ */
@@ -308,16 +314,16 @@ func retrieveFile(msgHandler *messages.MessageHandler, filename string, dest str
 	}
 	defer file.Close()
 
-	// open up connections with nodes to get chunks
-	numChunks := len(response.ChunkMap)
+	// open node connections
+	numChunks := response.NumChunks
 	results := make(chan bool, numChunks)
-	for chunkname, nodeAddr := range response.ChunkMap {
-		go getChunkFromNode(filename, chunkname, nodeAddr, file, results)
+	for nodeAddr := range response.NodeChunks {
+		go retrieveChunks(filename, nodeAddr, response.NodeChunks[nodeAddr].Nodes, file, results)
 	}
 
 	// check that we have receievd all chunks successfully
 	var failed bool
-	for i := 0; i < numChunks; i++ {
+	for i := 0; i < int(numChunks); i++ {
 		success := <-results
 		if !success {
 			failed = true

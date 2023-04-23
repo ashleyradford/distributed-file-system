@@ -232,19 +232,25 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retreiveReq *m
 	// first check if file is store in directory { filename : { chunk : data } }
 	chunkMap, ok := controller.fileMap[retreiveReq.Filename]
 	if !ok {
-		msgHandler.SendRetrievalResC(false, "File is not stored.", nil)
+		msgHandler.SendRetrievalResC(false, "File is not stored.", 0, nil)
 	}
 
 	// create chunk map to return to client and find mappings
-	chunkNode := make(map[string]string)
+	numChunks := int64(0)
+	nodeChunks := make(map[string][]string)
 	for chunk, data := range chunkMap {
-		// grab any node from the { chunk : data.nodes } map
-		for node := range data.nodes {
-			chunkNode[chunk] = controller.nodeMap[node].addr
+		// grab any one node from the { chunk : data.nodes } map
+		for node, ok := range data.nodes {
+			if !ok {
+				nodeChunks[controller.nodeMap[node].addr] = make([]string, 0)
+			}
+			nodeChunks[controller.nodeMap[node].addr] = append(nodeChunks[controller.nodeMap[node].addr], chunk)
+			numChunks++
+			break
 		}
 	}
 
-	msgHandler.SendRetrievalResC(true, "", chunkNode)
+	msgHandler.SendRetrievalResC(true, "", numChunks, nodeChunks)
 }
 
 func receiveDeleteRequest(msgHandler *messages.MessageHandler, deleteReq *messages.DeleteReq,

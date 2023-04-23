@@ -26,7 +26,8 @@ message CStorageRes {
 message CRetrievalRes {
     bool ok = 1;
     string message = 2;
-    map<string, string> chunk_map = 3;
+    int64 numChunks = 3;
+    map<string, NodeList> node_chunks = 4;
 }
 
 message ReplicaOrder {
