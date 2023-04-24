@@ -13,9 +13,11 @@ import (
 	"net"
 	"os"
 	"path"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -34,6 +36,21 @@ type chunkData struct {
 	size         int64
 	replicaNodes []string
 	contents     []byte
+}
+
+func isText(filePath string) bool {
+	ext := strings.ToLower(filepath.Ext(filePath))
+
+	// some common text file extensions
+	textExts := []string{".txt", ".csv", ".log", ".html", ".xml", ".json", ".yaml", ".md"}
+
+	for _, textExt := range textExts {
+		if ext == textExt {
+			return true
+		}
+	}
+
+	return false
 }
 
 func makeChunkMap(filename string, filesize int64, chunksize int64) (chunkMap map[string]int64) {
@@ -55,6 +72,77 @@ func makeChunkMap(filename string, filesize int64, chunksize int64) (chunkMap ma
 		remainingBytes -= chunksize
 	}
 
+	return chunkMap
+}
+
+func makeAwareChunkMap(filepath string, filename string, filesize int64,
+	chunksize int64) (chunkMap map[string]int64) {
+
+	// initialize chunk data map
+	chunkMap = make(map[string]int64)
+
+	file, err := os.Open(filepath)
+	if err != nil {
+		log.Println(err)
+		return nil
+	}
+	defer file.Close()
+
+	numChunks := 0
+	remainingBytes := filesize
+	offset := int64(0)
+
+	// add chunk names to map
+	for {
+		chunkname := fmt.Sprintf("%s_chunk%d", filename, offset)
+
+		// no more bytes to read
+		if remainingBytes == 0 {
+			break
+		}
+		// on last chunk
+		if remainingBytes <= chunksize {
+			chunkMap[chunkname] = remainingBytes
+			numChunks++
+			break
+		}
+
+		// go to last byte of current chunk
+		_, err := file.Seek(offset+chunksize-1, 0)
+		if err != nil {
+			log.Println(err)
+			return nil
+		}
+		remainingBytes -= chunksize
+
+		// read bytes until we reach newline character
+		awaresize := chunksize
+		buf := make([]byte, 1)
+		for {
+			_, err := file.Read(buf)
+			if err != nil {
+				log.Println(err)
+				return nil
+			}
+
+			// reached newline character
+			if buf[0] == '\n' {
+				chunkMap[chunkname] = awaresize
+				numChunks++
+				break
+			}
+
+			// keep reading until we find newline
+			awaresize++
+			offset++
+			remainingBytes--
+		}
+
+		offset += chunksize
+	}
+
+	fmt.Println(chunkMap)
+	log.Printf("Number of chunks: %d", numChunks)
 	return chunkMap
 }
 
@@ -109,7 +197,7 @@ func readFile(filepath string, filename string, chunkSize map[string]int64, chun
 
 func sendDataToNode(msgHandler *messages.MessageHandler, chunkStream chan chunkData, results chan bool) {
 	for {
-		// receive data from the dataStream channel specific to this connection
+		// receive data from the channel specific to this connection
 		chunkStruct := <-chunkStream
 
 		// send storage req to specified node
@@ -229,9 +317,20 @@ func storeFile(msgHandler *messages.MessageHandler, filepath string, chunksize i
 	}
 	filesize := int64(info.Size())
 
-	// send filename and chunk size map to controller
+	// create chunk size map for storage request
+	isText := isText(filepath)
 	filename := path.Base(filepath)
-	chunkSizeMap := makeChunkMap(filename, filesize, chunksize)
+	var chunkSizeMap map[string]int64
+	if isText {
+		chunkSizeMap = makeAwareChunkMap(filepath, filename, filesize, chunksize)
+		if chunkSizeMap == nil {
+			return
+		}
+	} else {
+		chunkSizeMap = makeChunkMap(filename, filesize, chunksize)
+	}
+
+	// send filename, size, and chunk size map to controller
 	msgHandler.SendStorageReqC(filename, filesize, chunkSizeMap)
 
 	// wait for response from controller

@@ -51,3 +51,11 @@ CASES THAT INVOLVE FAULT TOLERANCE
       b) need to check that status is completed, if not
       c) need to check that hasvnt been in pending since timeout (to combat against reps that never made it)
 3) file is corrupted, node requests a replica from controller who gives it a buddy to get it from
+
+Limitations:
+- Not reading to the closest newline, just going to the next newline character
+
+Hard spots:
+- Making it content aware with current implementation because i hardcode the
+  offset in the file name. Which made this a very challenging problem if i 
+  wanted to treat data as a stream and not read it in twice.
