@@ -417,7 +417,7 @@ func retrieveFile(msgHandler *messages.MessageHandler, filename string, dest str
 	numChunks := response.NumChunks
 	results := make(chan bool, numChunks)
 	for nodeAddr := range response.NodeChunks {
-		go retrieveChunks(filename, nodeAddr, response.NodeChunks[nodeAddr].Nodes, file, results)
+		go retrieveChunks(filename, nodeAddr, response.NodeChunks[nodeAddr].Chunks, file, results)
 	}
 
 	// check that we have receievd all chunks successfully
@@ -504,7 +504,8 @@ func getNodes(msgHandler *messages.MessageHandler) {
 }
 
 func printUsage() {
-	fmt.Println("Usage: ./client host:port action {file-name} {chunk-size MB} {dest}")
+	fmt.Println("Usage: ./client host:port action {filename} {chunksize MB} {dest}")
+	fmt.Println("Actions: put get delete ls nodes")
 }
 
 func main() {
@@ -525,7 +526,7 @@ func main() {
 		break
 	default:
 		fmt.Println("Not a supported action:", action)
-		fmt.Println("Available actions: { \"put\", \"get\", \"delete\", \"ls\", \"nodes\" }")
+		fmt.Println("Available actions: put get delete ls nodes")
 		return
 	}
 
@@ -540,8 +541,15 @@ func main() {
 
 	// send request to controller
 	msgHandler := messages.NewMessageHandler(conn)
+	defer msgHandler.Close()
+
 	switch action {
 	case "put":
+		if len(os.Args) < 4 || len(os.Args) > 5 {
+			printUsage()
+			return
+		}
+
 		// set chunk size
 		var chunksize int64
 		if len(os.Args) == 5 {
@@ -550,26 +558,21 @@ func main() {
 		} else {
 			chunksize = int64(math.Pow(2, 20)) // 1MB default chunk size
 		}
-
-		if len(os.Args) > 5 {
+		storeFile(msgHandler, filepath, chunksize)
+	case "get":
+		if len(os.Args) < 4 || len(os.Args) > 5 {
 			printUsage()
 			return
 		}
-		storeFile(msgHandler, filepath, chunksize)
-	case "get":
+
 		// check if target directory exists
 		dest := DEST
 		if len(os.Args) == 5 {
 			dest = os.Args[5]
 		}
-
-		if len(os.Args) > 5 {
-			printUsage()
-			return
-		}
 		retrieveFile(msgHandler, filepath, dest) // should be a filename
 	case "delete":
-		if len(os.Args) > 4 {
+		if len(os.Args) != 4 {
 			printUsage()
 			return
 		}
@@ -587,5 +590,4 @@ func main() {
 		}
 		getNodes(msgHandler)
 	}
-	defer msgHandler.Close()
 }

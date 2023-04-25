@@ -1,7 +1,10 @@
-all: ${HOME}/go/bin/controller ${HOME}/go/bin/storage_node ${HOME}/go/bin/client
+all: ${HOME}/go/bin/controller ${HOME}/go/bin/yarm ${HOME}/go/bin/storage_node ${HOME}/go/bin/client
 
 ${HOME}/go/bin/controller: controller/controller.go
 	go install controller/controller.go
+
+${HOME}/go/bin/yarm: yarm/yarm.go
+	go install yarm/yarm.go
 
 ${HOME}/go/bin/storage_node: storage_node/storage_node.go
 	go install storage_node/storage_node.go

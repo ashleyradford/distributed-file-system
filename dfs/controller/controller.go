@@ -232,10 +232,10 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retreiveReq *m
 	// first check if file is store in directory { filename : { chunk : data } }
 	chunkMap, ok := controller.fileMap[retreiveReq.Filename]
 	if !ok {
-		msgHandler.SendRetrievalResC(false, "File is not stored.", 0, nil)
+		msgHandler.SendRetrievalResC(false, "File is not stored in DFS.", 0, nil)
 	}
 
-	// create chunk map to return to client and find mappings
+	// create { node : chunks } map for client and find mappings
 	numChunks := int64(0)
 	nodeChunks := make(map[string][]string)
 	for chunk, data := range chunkMap {
@@ -261,7 +261,7 @@ func receiveDeleteRequest(msgHandler *messages.MessageHandler, deleteReq *messag
 	// first check if file is store in directory
 	_, ok := controller.fileMap[deleteReq.Filename]
 	if !ok {
-		msgHandler.SendDeleteRes(false, "File does not exist.")
+		msgHandler.SendDeleteRes(false, "File does not exist in DFS.")
 	}
 
 	// delete file mapping
@@ -291,6 +291,29 @@ func receiveReplicaRequest(msgHandler *messages.MessageHandler, replicaReq *mess
 	} else {
 		msgHandler.SendReplicaRes(false, "Cannot find node with a clean copy.", "")
 	}
+}
+
+func receiveMapRequest(msgHandler *messages.MessageHandler, mapReq *messages.MapReq,
+	controller *controllerData) {
+
+	log.Println("Received map request from resource manager")
+
+	// first check if file is store in directory { filename : { chunk : data } }
+	chunkMap, ok := controller.fileMap[mapReq.Filename]
+	if !ok {
+		msgHandler.SendMapRes(false, "File is not stored in DFS.", nil)
+	}
+
+	// create { chunk : nodes } for resource manager
+	chunkNodes := make(map[string][]string)
+	for chunk, data := range chunkMap {
+		chunkNodes[chunk] = make([]string, 0)
+		for node := range data.nodes {
+			chunkNodes[chunk] = append(chunkNodes[chunk], node)
+		}
+	}
+
+	msgHandler.SendMapRes(true, "", chunkNodes)
 }
 
 /* --------- Send Messages --------- */
@@ -460,6 +483,8 @@ func handleReq(conn net.Conn, controller *controllerData, msgHandler *messages.M
 			receiveDeleteRequest(msgHandler, msg.DeleteReq, controller)
 		case *messages.Wrapper_ReplicaReq: // when a file has been corrupted
 			receiveReplicaRequest(msgHandler, msg.ReplicaReq, controller)
+		case *messages.Wrapper_MapReq:
+			receiveMapRequest(msgHandler, msg.MapReq, controller)
 		case nil:
 			return
 		default:

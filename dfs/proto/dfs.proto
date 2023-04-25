@@ -23,11 +23,15 @@ message CStorageRes {
     map<string, NodeList> replica_nodes = 5;
 }
 
+message ChunkList {
+    repeated string chunks = 1;
+}
+
 message CRetrievalRes {
     bool ok = 1;
     string message = 2;
     int64 numChunks = 3;
-    map<string, NodeList> node_chunks = 4;
+    map<string, ChunkList> node_chunks = 4;
 }
 
 message ReplicaOrder {
@@ -57,14 +61,21 @@ message DeleteRes {
     string message = 2;
 }
 
+message MapRes {
+    bool ok = 1;
+    string message = 2;
+    map<string, NodeList> chunk_nodes = 3;
+}
+
+/* ------------- RM messages ------------- */
+message MapReq {
+    string filename = 1;
+}
+
 /* ------------ Node messages ------------ */
 message JoinReq {
     string node_addr = 1;
     uint64 disk_space = 2;
-}
-
-message ChunkList {
-    repeated string chunks = 1;
 }
 
 message Heartbeat {
@@ -151,24 +162,27 @@ message Wrapper {
         ReplicaRes replica_res = 6;
         ListRes list_res = 7;
         NodesRes nodes_res = 8;
-        DeleteRes delete_res = 9;        
+        DeleteRes delete_res = 9;  
+        MapRes map_res = 10;
 
-        JoinReq join_req = 10;
-        Heartbeat heartbeat = 11;
-        NStorageRes n_storage_res = 12;
-        NRetrievalRes n_retrieval_res = 13;
-        OrderRes order_res = 14;
-        ReplicaReq replica_req = 15;
+        MapReq map_req = 11;      
 
-        CStorageReq c_storage_req = 16;
-        NStorageReq n_storage_req = 17;
-        CRetrievalReq c_retrieval_req = 18;
-        NRetrievalReq n_retrieval_req = 19;
-        ListReq list_req = 20;
-        NodesReq nodes_req = 21;
-        DeleteReq delete_req = 22;
+        JoinReq join_req = 12;
+        Heartbeat heartbeat = 13;
+        NStorageRes n_storage_res = 14;
+        NRetrievalRes n_retrieval_res = 15;
+        OrderRes order_res = 16;
+        ReplicaReq replica_req = 17;
 
-        Checksum md5 = 23;
-        ChecksumRes checksum_res = 24;
+        CStorageReq c_storage_req = 18;
+        NStorageReq n_storage_req = 19;
+        CRetrievalReq c_retrieval_req = 20;
+        NRetrievalReq n_retrieval_req = 21;
+        ListReq list_req = 22;
+        NodesReq nodes_req = 23;
+        DeleteReq delete_req = 24;
+
+        Checksum md5 = 25;
+        ChecksumRes checksum_res = 26;
     }
 }

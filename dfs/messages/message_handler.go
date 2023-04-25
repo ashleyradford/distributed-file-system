@@ -222,11 +222,11 @@ func (m *MessageHandler) SendRetrievalReqC(filename string) error {
 }
 
 func (m *MessageHandler) SendRetrievalResC(ok bool, message string, numChunks int64, nodeChunks map[string][]string) error {
-	msg := CRetrievalRes{Ok: ok, Message: message, NumChunks: numChunks, NodeChunks: make(map[string]*NodeList)}
+	msg := CRetrievalRes{Ok: ok, Message: message, NumChunks: numChunks, NodeChunks: make(map[string]*ChunkList)}
 
 	// add node list to map
-	for chunk := range nodeChunks {
-		msg.NodeChunks[chunk] = &NodeList{Nodes: nodeChunks[chunk]}
+	for node := range nodeChunks {
+		msg.NodeChunks[node] = &ChunkList{Chunks: nodeChunks[node]}
 	}
 
 	wrapper := &Wrapper{
@@ -295,6 +295,28 @@ func (m *MessageHandler) SendReplicaRes(ok bool, node_id string, node_addr strin
 	msg := ReplicaRes{Ok: ok, NodeId: node_id, NodeAddr: node_addr}
 	wrapper := &Wrapper{
 		Msg: &Wrapper_ReplicaRes{ReplicaRes: &msg},
+	}
+	return m.Send(wrapper)
+}
+
+func (m *MessageHandler) SendMapReq(filename string) error {
+	msg := MapReq{Filename: filename}
+	wrapper := &Wrapper{
+		Msg: &Wrapper_MapReq{MapReq: &msg},
+	}
+	return m.Send(wrapper)
+}
+
+func (m *MessageHandler) SendMapRes(ok bool, message string, chunkNodes map[string][]string) error {
+	msg := MapRes{Ok: ok, Message: message, ChunkNodes: make(map[string]*NodeList)}
+
+	// add node list to map
+	for chunk := range chunkNodes {
+		msg.ChunkNodes[chunk] = &NodeList{Nodes: chunkNodes[chunk]}
+	}
+
+	wrapper := &Wrapper{
+		Msg: &Wrapper_MapRes{MapRes: &msg},
 	}
 	return m.Send(wrapper)
 }
