@@ -309,7 +309,7 @@ func receiveMapRequest(msgHandler *messages.MessageHandler, mapReq *messages.Map
 	for chunk, data := range chunkMap {
 		chunkNodes[chunk] = make([]string, 0)
 		for node := range data.nodes {
-			chunkNodes[chunk] = append(chunkNodes[chunk], node)
+			chunkNodes[chunk] = append(chunkNodes[chunk], controller.nodeMap[node].addr)
 		}
 	}
 

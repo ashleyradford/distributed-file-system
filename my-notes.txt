@@ -59,3 +59,5 @@ Hard spots:
 - Making it content aware with current implementation because i hardcode the
   offset in the file name. Which made this a very challenging problem if i 
   wanted to treat data as a stream and not read it in twice.
+
+go build -buildmode=plugin test.go

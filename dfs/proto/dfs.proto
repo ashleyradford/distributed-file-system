@@ -72,6 +72,11 @@ message MapReq {
     string filename = 1;
 }
 
+message MapOrder {
+    bytes job = 1;
+    repeated string chunks = 2;
+}
+
 /* ------------ Node messages ------------ */
 message JoinReq {
     string node_addr = 1;
@@ -162,27 +167,28 @@ message Wrapper {
         ReplicaRes replica_res = 6;
         ListRes list_res = 7;
         NodesRes nodes_res = 8;
-        DeleteRes delete_res = 9;  
+        DeleteRes delete_res = 9;
         MapRes map_res = 10;
 
-        MapReq map_req = 11;      
+        MapReq map_req = 11;
+        MapOrder map_order = 12;
 
-        JoinReq join_req = 12;
-        Heartbeat heartbeat = 13;
-        NStorageRes n_storage_res = 14;
-        NRetrievalRes n_retrieval_res = 15;
-        OrderRes order_res = 16;
-        ReplicaReq replica_req = 17;
+        JoinReq join_req = 13;
+        Heartbeat heartbeat = 14;
+        NStorageRes n_storage_res = 15;
+        NRetrievalRes n_retrieval_res = 16;
+        OrderRes order_res = 17;
+        ReplicaReq replica_req = 18;
 
-        CStorageReq c_storage_req = 18;
-        NStorageReq n_storage_req = 19;
-        CRetrievalReq c_retrieval_req = 20;
-        NRetrievalReq n_retrieval_req = 21;
-        ListReq list_req = 22;
-        NodesReq nodes_req = 23;
-        DeleteReq delete_req = 24;
+        CStorageReq c_storage_req = 19;
+        NStorageReq n_storage_req = 20;
+        CRetrievalReq c_retrieval_req = 21;
+        NRetrievalReq n_retrieval_req = 22;
+        ListReq list_req = 23;
+        NodesReq nodes_req = 24;
+        DeleteReq delete_req = 25;
 
-        Checksum md5 = 25;
-        ChecksumRes checksum_res = 26;
+        Checksum md5 = 26;
+        ChecksumRes checksum_res = 27;
     }
 }

@@ -7,9 +7,11 @@ import (
 	"dfs/util"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 	"os"
+	"plugin"
 	"sync"
 	"time"
 )
@@ -17,6 +19,11 @@ import (
 var m = sync.RWMutex{}
 
 const DEST = "/bigdata/students/aeradford/mydfs"
+
+type MapReduce interface {
+	Map()
+	Reduce()
+}
 
 type storageNode struct {
 	nodeId    string
@@ -270,6 +277,53 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retrieveReq *m
 	}
 }
 
+func receiveMapOrder(msgHandler *messages.MessageHandler, mapOrder *messages.MapOrder,
+	node *storageNode, dest string) {
+
+	log.Println("Received map reduce job")
+
+	// create temp file for so bytes
+	tmpfile, err := ioutil.TempFile("", "job_*.so")
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer os.Remove(tmpfile.Name())
+
+	// write bytes to tempfile
+	_, err = tmpfile.Write(mapOrder.Job)
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	tmpfile.Close()
+
+	// load the plugin from the temporary file
+	plug, err := plugin.Open(tmpfile.Name())
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	// look up MapReduce symbol (exported function or variable)
+	mapReduce, err := plug.Lookup("MapReduce")
+	if err != nil {
+		log.Println(err)
+		return
+	}
+
+	// assert that loaded symbol is of MapReduce type
+	var job MapReduce
+	job, ok := mapReduce.(MapReduce)
+	if !ok {
+		log.Println("Unexpected type from module symbol")
+		return
+	}
+
+	// use module
+	job.Map()
+}
+
 /* ------ Send Messages ------ */
 func sendHeartbeat(node *storageNode) error {
 	// try to connect to controller
@@ -464,6 +518,8 @@ func handleMessages(conn net.Conn, msgHandler *messages.MessageHandler, ctrlrAdd
 			receiveRetrievalRequest(msgHandler, msg.NRetrievalReq, node, dest)
 		case *messages.Wrapper_ReplicaOrder:
 			receiveReplicaOrder(msgHandler, msg.ReplicaOrder, node, dest)
+		case *messages.Wrapper_MapOrder:
+			receiveMapOrder(msgHandler, msg.MapOrder, node, dest)
 		case nil:
 			return
 		default:
@@ -480,7 +536,7 @@ func listen(ctrlAddr string, node *storageNode, dest string) error {
 		log.Printf("Could not listen on %s", node.nodeAddr)
 		os.Exit(1)
 	}
-	log.Println("Listening for client and controller messages...")
+	log.Println("Listening for client, controller, and yarm messages...")
 
 	for {
 		if conn, err := listener.Accept(); err == nil {
@@ -523,7 +579,7 @@ func main() {
 	node.requests = 0
 	node.newChunks = make(map[string][]string)
 
-	// listen for client or controller messages
+	// listen for client, controller, or yarm messages
 	go listen(node.ctrlrAddr, node, dest)
 
 	// join cluster and send heartbeats

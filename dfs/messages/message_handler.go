@@ -291,8 +291,8 @@ func (m *MessageHandler) SendReplicaReq(nodeId string, filename string, chunknam
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendReplicaRes(ok bool, node_id string, node_addr string) error {
-	msg := ReplicaRes{Ok: ok, NodeId: node_id, NodeAddr: node_addr}
+func (m *MessageHandler) SendReplicaRes(ok bool, nodeId string, nodeAddr string) error {
+	msg := ReplicaRes{Ok: ok, NodeId: nodeId, NodeAddr: nodeAddr}
 	wrapper := &Wrapper{
 		Msg: &Wrapper_ReplicaRes{ReplicaRes: &msg},
 	}
@@ -317,6 +317,14 @@ func (m *MessageHandler) SendMapRes(ok bool, message string, chunkNodes map[stri
 
 	wrapper := &Wrapper{
 		Msg: &Wrapper_MapRes{MapRes: &msg},
+	}
+	return m.Send(wrapper)
+}
+
+func (m *MessageHandler) SendMapOrder(job []byte, chunks []string) error {
+	msg := MapOrder{Job: job, Chunks: chunks}
+	wrapper := &Wrapper{
+		Msg: &Wrapper_MapOrder{MapOrder: &msg},
 	}
 	return m.Send(wrapper)
 }
