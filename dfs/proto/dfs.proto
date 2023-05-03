@@ -73,8 +73,9 @@ message MapReq {
 }
 
 message MapOrder {
-    bytes job = 1;
-    repeated string chunks = 2;
+    string job_hash = 1;
+    bytes job = 2;
+    repeated string chunks = 3;
 }
 
 /* ------------ Node messages ------------ */

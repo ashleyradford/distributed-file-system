@@ -321,8 +321,8 @@ func (m *MessageHandler) SendMapRes(ok bool, message string, chunkNodes map[stri
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendMapOrder(job []byte, chunks []string) error {
-	msg := MapOrder{Job: job, Chunks: chunks}
+func (m *MessageHandler) SendMapOrder(jobHash string, job []byte, chunks []string) error {
+	msg := MapOrder{JobHash: jobHash, Job: job, Chunks: chunks}
 	wrapper := &Wrapper{
 		Msg: &Wrapper_MapOrder{MapOrder: &msg},
 	}

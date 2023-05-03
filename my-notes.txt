@@ -60,6 +60,7 @@ Issues:
 - Making it content aware with current implementation because i relied on the
   offset in the file name. Which made this a very challenging problem if i 
   wanted to treat data as a stream and not read it in twice.
+- Not verifiying a checksum of the sent so file
 
 Test commands:
 ~/go/bin/client orion05:24000 put ilovecats.txt 0.00004

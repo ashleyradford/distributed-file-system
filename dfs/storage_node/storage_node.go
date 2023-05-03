@@ -28,12 +28,13 @@ type MapReduce interface {
 }
 
 type storageNode struct {
-	nodeId    string
-	nodeAddr  string
-	ctrlrAddr string
-	diskSpace uint64
-	requests  int64
-	newChunks map[string][]string
+	nodeId      string
+	nodeAddr    string
+	ctrlrAddr   string
+	diskSpace   uint64
+	requests    int64
+	newChunks   map[string][]string
+	pluginCache map[string]*plugin.Plugin
 }
 
 func updateNodeInfo(node *storageNode, success bool, filename string, chunkname string) {
@@ -279,29 +280,39 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retrieveReq *m
 	}
 }
 
-func getPlugin(mapOrder *messages.MapOrder, dest string) (MapReduce, error) {
-	// create temp file for so bytes
-	tmpfile, err := ioutil.TempFile(dest, "job_*.so")
-	if err != nil {
-		return nil, err
-	}
-	defer os.Remove(tmpfile.Name())
+func getPlugin(mapOrder *messages.MapOrder, dest string, node *storageNode) (MapReduce, error) {
 
-	// write bytes to tempfile
-	_, err = tmpfile.Write(mapOrder.Job)
-	if err != nil {
-		return nil, err
-	}
-	tmpfile.Close()
+	// check if so file has been hashed
+	var jobPlugin *plugin.Plugin
+	if _, ok := node.pluginCache[mapOrder.JobHash]; ok {
+		jobPlugin = node.pluginCache[mapOrder.JobHash]
+	} else {
+		// create temp file for so bytes
+		tmpfile, err := ioutil.TempFile(dest, "job_*.so")
+		if err != nil {
+			return nil, err
+		}
+		defer os.Remove(tmpfile.Name())
 
-	// load the plugin from the temporary file
-	plug, err := plugin.Open(tmpfile.Name())
-	if err != nil {
-		return nil, err
+		// write bytes to tempfile
+		_, err = tmpfile.Write(mapOrder.Job)
+		if err != nil {
+			return nil, err
+		}
+		tmpfile.Close()
+
+		// load the plugin from the temporary file
+		jobPlugin, err = plugin.Open(tmpfile.Name())
+		if err != nil {
+			return nil, err
+		}
+
+		// add plugin to cache
+		node.pluginCache[mapOrder.JobHash] = jobPlugin
 	}
 
 	// look up MapReduce symbol (exported function or variable)
-	mapReduce, err := plug.Lookup("MapReduce")
+	mapReduce, err := jobPlugin.Lookup("MapReduce")
 	if err != nil {
 		return nil, err
 	}
@@ -361,7 +372,7 @@ func receiveMapOrder(msgHandler *messages.MessageHandler, mapOrder *messages.Map
 
 	log.Println("Received map reduce job")
 
-	job, err := getPlugin(mapOrder, dest)
+	job, err := getPlugin(mapOrder, dest, node)
 	if job == nil {
 		// send failed message back
 		msgHandler.SendMapStatus(false, err.Error())
@@ -649,6 +660,7 @@ func main() {
 	node.diskSpace = freeSpace
 	node.requests = 0
 	node.newChunks = make(map[string][]string)
+	node.pluginCache = make(map[string]*plugin.Plugin)
 
 	// listen for client, controller, or yarm messages
 	go listen(node.ctrlrAddr, node, dest)

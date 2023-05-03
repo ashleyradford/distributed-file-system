@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"crypto/md5"
 	"dfs/messages"
 	"fmt"
-	"io/ioutil"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -64,7 +66,7 @@ func determineMappers(chunkNodeMap map[string][]string) map[string][]string {
 	return nodeChunkMap
 }
 
-func sendJob(nodeAddr string, job []byte, chunks []string, ok chan bool) {
+func sendJob(nodeAddr string, job_hash string, job []byte, chunks []string, ok chan bool) {
 	// try to connect to given node
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
@@ -77,7 +79,7 @@ func sendJob(nodeAddr string, job []byte, chunks []string, ok chan bool) {
 	msgHandler := messages.NewMessageHandler(conn)
 
 	// send the map order
-	msgHandler.SendMapOrder(job, chunks)
+	msgHandler.SendMapOrder(job_hash, job, chunks)
 
 	// wait for map response
 	wrapper, _ := msgHandler.Receive()
@@ -105,8 +107,19 @@ func main() {
 	filepath := os.Args[3]
 	filename := path.Base(filepath)
 
-	// get the bytes of the so file
-	soBytes, err := ioutil.ReadFile(os.Args[2])
+	// open the so file
+	soFile, err := os.Open(os.Args[2])
+	if err != nil {
+		log.Println(err)
+		return
+	}
+	defer soFile.Close()
+
+	// set up hash for so contents and copy bytes over
+	md5Hash := md5.New()
+	soBytes := new(bytes.Buffer)
+	w := io.MultiWriter(soBytes, md5Hash)
+	_, err = io.Copy(w, soFile)
 	if err != nil {
 		log.Println(err)
 		return
@@ -146,7 +159,7 @@ func main() {
 	// send the job to the mapper nodes
 	mapStatus := make(chan bool, len(nodeChunkMap))
 	for nodeAddr, chunks := range nodeChunkMap {
-		go sendJob(nodeAddr, soBytes, chunks, mapStatus)
+		go sendJob(nodeAddr, string(fmt.Sprintf("%x", md5Hash.Sum(nil))), soBytes.Bytes(), chunks, mapStatus)
 	}
 
 	// check that all map tasks are complete
@@ -164,6 +177,6 @@ func main() {
 		fmt.Println("Map stage sucessfully completed.")
 	}
 
-	// push job to compumaketation nodes
+	// push job to computation nodes
 	// pushJob(nodeChunkMap, numReducers)
 }
