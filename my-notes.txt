@@ -54,10 +54,19 @@ CASES THAT INVOLVE FAULT TOLERANCE
 
 Limitations:
 - Not reading to the closest newline, just going to the next newline character
+- Key, value pairs are string, maybe better to have them as bytes?
 
-Hard spots:
-- Making it content aware with current implementation because i hardcode the
+Issues:
+- Making it content aware with current implementation because i relied on the
   offset in the file name. Which made this a very challenging problem if i 
   wanted to treat data as a stream and not read it in twice.
 
-go build -buildmode=plugin test.go
+Test commands:
+~/go/bin/client orion05:24000 put ilovecats.txt 0.00004
+~/go/bin/yarm orion05:24000 word_count/word_count.so ilovecats.txt
+go build -buildmode=plugin word_count.go 
+
+Questions:
+- Is letting manager know when all map jobs are complete on a single node?
+  Or should we be doing it affter each line?
+- Is the temp file design a bad idea?

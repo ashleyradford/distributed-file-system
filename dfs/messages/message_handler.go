@@ -329,6 +329,14 @@ func (m *MessageHandler) SendMapOrder(job []byte, chunks []string) error {
 	return m.Send(wrapper)
 }
 
+func (m *MessageHandler) SendMapStatus(ok bool, message string) error {
+	msg := MapStatus{Ok: ok, Message: message}
+	wrapper := &Wrapper{
+		Msg: &Wrapper_MapStatus{MapStatus: &msg},
+	}
+	return m.Send(wrapper)
+}
+
 func (m *MessageHandler) Close() {
 	m.conn.Close()
 }

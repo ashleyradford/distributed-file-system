@@ -112,6 +112,11 @@ message ReplicaReq {
     string chunkname = 3;
 }
 
+message MapStatus {
+    bool ok = 1;
+    string message = 2;
+}
+
 /* ------------ Client messages ------------ */
 message CStorageReq {
     string filename = 1;
@@ -179,16 +184,17 @@ message Wrapper {
         NRetrievalRes n_retrieval_res = 16;
         OrderRes order_res = 17;
         ReplicaReq replica_req = 18;
+        MapStatus map_status = 19;
 
-        CStorageReq c_storage_req = 19;
-        NStorageReq n_storage_req = 20;
-        CRetrievalReq c_retrieval_req = 21;
-        NRetrievalReq n_retrieval_req = 22;
-        ListReq list_req = 23;
-        NodesReq nodes_req = 24;
-        DeleteReq delete_req = 25;
+        CStorageReq c_storage_req = 20;
+        NStorageReq n_storage_req = 21;
+        CRetrievalReq c_retrieval_req = 22;
+        NRetrievalReq n_retrieval_req = 23;
+        ListReq list_req = 24;
+        NodesReq nodes_req = 25;
+        DeleteReq delete_req = 26;
 
-        Checksum md5 = 26;
-        ChecksumRes checksum_res = 27;
+        Checksum md5 = 27;
+        ChecksumRes checksum_res = 28;
     }
 }

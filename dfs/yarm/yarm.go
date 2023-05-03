@@ -8,7 +8,6 @@ import (
 	"net"
 	"os"
 	"path"
-	"time"
 )
 
 const INTER_DEST = "/bigdata/students/aeradford/mydfs/intermediate"
@@ -65,11 +64,12 @@ func determineMappers(chunkNodeMap map[string][]string) map[string][]string {
 	return nodeChunkMap
 }
 
-func sendJob(nodeAddr string, job []byte, chunks []string) {
+func sendJob(nodeAddr string, job []byte, chunks []string, ok chan bool) {
 	// try to connect to given node
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
 		log.Println(err)
+		ok <- false
 		return
 	}
 
@@ -78,6 +78,17 @@ func sendJob(nodeAddr string, job []byte, chunks []string) {
 
 	// send the map order
 	msgHandler.SendMapOrder(job, chunks)
+
+	// wait for map response
+	wrapper, _ := msgHandler.Receive()
+	msg, _ := wrapper.Msg.(*messages.Wrapper_MapStatus)
+	if msg.MapStatus.Ok {
+		ok <- true
+		log.Printf("%s: %s\n", nodeAddr, msg.MapStatus.Message)
+	} else {
+		ok <- false
+		log.Printf("%s: %s\n", nodeAddr, msg.MapStatus.Message)
+	}
 
 	// close message handler and connection
 	msgHandler.Close()
@@ -133,11 +144,25 @@ func main() {
 	nodeChunkMap := determineMappers(chunkNodeMap)
 
 	// send the job to the mapper nodes
+	mapStatus := make(chan bool, len(nodeChunkMap))
 	for nodeAddr, chunks := range nodeChunkMap {
-		go sendJob(nodeAddr, soBytes, chunks)
+		go sendJob(nodeAddr, soBytes, chunks, mapStatus)
 	}
 
-	time.Sleep(20 * time.Second)
+	// check that all map tasks are complete
+	var failed bool
+	for i := 0; i < len(nodeChunkMap); i++ {
+		success := <-mapStatus
+		if !success {
+			failed = true
+		}
+	}
+
+	if failed {
+		fmt.Println("Failed to complete map task.")
+	} else {
+		fmt.Println("Map stage sucessfully completed.")
+	}
 
 	// push job to compumaketation nodes
 	// pushJob(nodeChunkMap, numReducers)

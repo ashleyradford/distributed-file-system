@@ -1,5 +1,5 @@
 # Controller server
-controller="orion06"
+controller="orion05"
 cport="24000"
 
 # Node servers

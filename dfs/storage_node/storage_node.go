@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/md5"
 	"dfs/messages"
 	"dfs/util"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -21,7 +23,7 @@ var m = sync.RWMutex{}
 const DEST = "/bigdata/students/aeradford/mydfs"
 
 type MapReduce interface {
-	Map()
+	Map(line_number int, line_text string) map[string]string
 	Reduce()
 }
 
@@ -277,51 +279,120 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retrieveReq *m
 	}
 }
 
-func receiveMapOrder(msgHandler *messages.MessageHandler, mapOrder *messages.MapOrder,
-	node *storageNode, dest string) {
-
-	log.Println("Received map reduce job")
-
+func getPlugin(mapOrder *messages.MapOrder, dest string) (MapReduce, error) {
 	// create temp file for so bytes
-	tmpfile, err := ioutil.TempFile("", "job_*.so")
+	tmpfile, err := ioutil.TempFile(dest, "job_*.so")
 	if err != nil {
-		log.Println(err)
-		return
+		return nil, err
 	}
 	defer os.Remove(tmpfile.Name())
 
 	// write bytes to tempfile
 	_, err = tmpfile.Write(mapOrder.Job)
 	if err != nil {
-		log.Println(err)
-		return
+		return nil, err
 	}
 	tmpfile.Close()
 
 	// load the plugin from the temporary file
 	plug, err := plugin.Open(tmpfile.Name())
 	if err != nil {
-		log.Println(err)
-		return
+		return nil, err
 	}
 
 	// look up MapReduce symbol (exported function or variable)
 	mapReduce, err := plug.Lookup("MapReduce")
 	if err != nil {
-		log.Println(err)
-		return
+		return nil, err
 	}
 
 	// assert that loaded symbol is of MapReduce type
 	var job MapReduce
 	job, ok := mapReduce.(MapReduce)
 	if !ok {
-		log.Println("Unexpected type from module symbol")
+		return nil, errors.New("unexpected type from module symbol")
+	}
+
+	return job, nil
+}
+
+func mapFile(filepath string, job MapReduce, tmpfile *os.File) (linesParsed int, err error) {
+	// open chunk file
+	chunkFile, err := os.OpenFile(filepath, os.O_RDONLY, 0644)
+	if err != nil {
+		return 0, err
+	}
+	defer chunkFile.Close()
+
+	// perform map job for each line, max length of buf is 64 * 1024 bytes
+	buf := 512 * 1024
+	scanner := bufio.NewScanner(chunkFile)
+	scanner.Buffer(make([]byte, buf), buf)
+	lineNum := 0
+
+	var kvPairs map[string]string
+	for scanner.Scan() {
+		lineText := scanner.Text()
+		kvPairs = job.Map(lineNum, lineText)
+		if len(kvPairs) > 0 {
+			// write key value pairs to temp file
+			for key, value := range kvPairs {
+				if _, err = tmpfile.Write(append([]byte(key), []byte("\n")...)); err != nil {
+					return 0, err
+				}
+				if _, err = tmpfile.Write(append([]byte(value), []byte("\n")...)); err != nil {
+					return 0, err
+				}
+			}
+			lineNum++
+		}
+	}
+
+	// throw error if line is too big
+	if scanner.Err() != nil {
+		log.Println(scanner.Err())
+	}
+
+	return lineNum, nil
+}
+
+func receiveMapOrder(msgHandler *messages.MessageHandler, mapOrder *messages.MapOrder,
+	node *storageNode, dest string) {
+
+	log.Println("Received map reduce job")
+
+	job, err := getPlugin(mapOrder, dest)
+	if job == nil {
+		// send failed message back
+		msgHandler.SendMapStatus(false, err.Error())
 		return
 	}
 
-	// use module
-	job.Map()
+	// create temp file for emitted key value pairs
+	tmpfile, err := ioutil.TempFile(dest, "kv_pairs_*.txt")
+	if err != nil {
+		// send failed message back
+		msgHandler.SendMapStatus(false, err.Error())
+		return
+	}
+
+	// perform map task on each chunk
+	var linesParsed int
+	for _, chunkFile := range mapOrder.Chunks {
+		filepath := dest + "/" + chunkFile
+		linesParsed, err = mapFile(filepath, job, tmpfile)
+		if err != nil {
+			// send failed message back
+			msgHandler.SendMapStatus(false, err.Error())
+			return
+		}
+	}
+
+	tmpfile.Close()
+	// os.Remove(tmpfile.Name())
+
+	// send map status back to resource manager
+	msgHandler.SendMapStatus(true, fmt.Sprintf("Successfully completed map task, %d lines parsed", linesParsed))
 }
 
 /* ------ Send Messages ------ */
