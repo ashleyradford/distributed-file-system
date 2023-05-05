@@ -14,7 +14,9 @@ import (
 	"math"
 	"net"
 	"os"
+	"path"
 	"plugin"
+	"regexp"
 	"sort"
 	"sync"
 	"time"
@@ -283,7 +285,6 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retrieveReq *m
 }
 
 func getPlugin(mapOrder *messages.JobOrder, dest string, node *storageNode) (MapReduce, error) {
-
 	// check if so file has been hashed
 	var jobPlugin *plugin.Plugin
 	if _, ok := node.pluginCache[mapOrder.JobHash]; ok {
@@ -360,26 +361,22 @@ func mapFile(filepath string, dest string, job MapReduce, context *util.Context)
 	// done writing to node files, close temp files
 	context.CloseFiles()
 
+	return lineNum, nil
+}
+
+func shufflePairs(dest string, context *util.Context) error {
 	// now we must sort before we send to reducers
 	tmpFilenames := context.GetFilenames()
-	sortedFiles := make([]*os.File, 0)
 	for _, filename := range tmpFilenames {
-		sorted, err := externalSort(filename, dest)
+		_, err := externalSort(filename, dest)
 		if err != nil {
-			return lineNum, err
+			return err
 		}
-		sortedFiles = append(sortedFiles, sorted)
 	}
 	// remove the old unsorted files
 	context.RemoveFiles()
 
-	// send sorted files to reducer nodes
-	for _, file := range sortedFiles {
-		print(file)
-		// os.Remove(file.Name())
-	}
-
-	return lineNum, nil
+	return nil
 }
 
 func externalSort(filename string, dest string) (*os.File, error) {
@@ -391,7 +388,6 @@ func externalSort(filename string, dest string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(sortedFile)
 	return sortedFile, nil
 }
 
@@ -447,8 +443,6 @@ func splitFile(filename string, dest string) ([]string, error) {
 
 		// sort the lines (by the keys)
 		sort.Strings(lines)
-		log.Println("GROUP OF LINES")
-		log.Println(lines)
 
 		// output sorted keys to temp file
 		tmpfile, err := ioutil.TempFile(dest, "sorted_pairs_*")
@@ -546,24 +540,22 @@ func mergeFiles(filename string, chunkfiles []string) (*os.File, error) {
 }
 
 func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.JobOrder,
-	node *storageNode, dest string) {
+	node *storageNode, dest string, shuffleCh chan string) {
 
 	log.Println("Received map reduce job")
 
 	job, err := getPlugin(jobOrder, dest, node)
 	if job == nil {
 		// send failed message back
-		msgHandler.SendMapStatus(false, err.Error())
+		msgHandler.SendJobStatus(false, err.Error())
 		return
 	}
-
-	fmt.Println(jobOrder.ReducerNodes)
 
 	// create temp file for emitted key value pairs
 	context, err := util.NewContext(dest, jobOrder.ReducerNodes)
 	if err != nil {
 		// send failed message back
-		msgHandler.SendMapStatus(false, err.Error())
+		msgHandler.SendJobStatus(false, err.Error())
 		return
 	}
 
@@ -574,117 +566,110 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 		linesParsed, err = mapFile(filepath, dest, job, context)
 		if err != nil {
 			// send failed message back
-			msgHandler.SendMapStatus(false, err.Error())
+			msgHandler.SendJobStatus(false, err.Error())
 			return
 		}
 	}
 
 	// send map status back to resource manager
-	msgHandler.SendMapStatus(true, fmt.Sprintf("successfully completed map task, %d lines parsed", linesParsed))
+	msgHandler.SendJobStatus(true, fmt.Sprintf("successfully completed map task, %d lines parsed", linesParsed))
 
-	// wait for response with list of reducer nodes
-	// wrapper, _ := msgHandler.Receive()
-	// response := wrapper.GetNodeList()
+	// begin shuffle phase: aka sort files
+	err = shufflePairs(dest, context)
+	if err != nil {
+		msgHandler.SendJobStatus(false, err.Error())
+		return
+	}
 
-	// begin shuffle phase
-	// err = shufflePairs(context.GetName(), response.Nodes)
-	// if err != nil {
-	// 	// send message back to manager letting know an error occurred
-	// }
+	// send shuffled pairs to reducers
+	for _, filename := range context.GetFilenames() {
+		err := sendPairs(filename + "_sorted")
+		if err != nil {
+			msgHandler.SendJobStatus(false, err.Error())
+			return
+		}
+	}
 
-	// send message back to manager letting know all data has been sent to reducers
+	msgHandler.SendJobStatus(true, "successfully sent sorted pairs to reducers")
+
+	// if reducer, then wait for shuffled pairs
+	if jobOrder.IsReducer {
+		// listen for other mapper connections
+		log.Println("I'm a reducer!")
+		tmpFiles := make([]string, jobOrder.NumMappers)
+		for i := 0; i < int(jobOrder.NumMappers); i++ {
+			tmpFiles[i] = <-shuffleCh
+		}
+
+		// now merge sort and group at the same time (!!!!!!!)
+
+	}
 }
 
-// func connectReducer(nodeAddr string) (*messages.MessageHandler, error) {
-// 	// open up a tcp connection with specified node
-// 	conn, err := net.Dial("tcp", nodeAddr)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+func sendPairs(filename string) error {
+	// open sorted temp file
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
 
-// 	log.Printf("Successfully connected to reducer %s\n", nodeAddr)
-// 	msgHandler := messages.NewMessageHandler(conn)
+	// get file size
+	info, err := os.Stat(filename)
+	if err != nil {
+		return err
+	}
+	filesize := info.Size()
 
-// 	return msgHandler, nil
-// }
+	// get reducer address from filename
+	basename := path.Base(filename)
+	re := regexp.MustCompile(`^([^_]+).*`)
+	match := re.FindStringSubmatch(basename)
+	if match == nil {
+		return errors.New("cannot extract reducer address")
+	}
 
-// func shufflePairs(filename string, reducerNodes []string) error {
-// 	// open temp file with all the pairs
-// 	tmpFile, err := os.Open(filename)
-// 	if err != nil {
-// 		return err
-// 	}
+	// open connection with reducer nodes
+	conn, err := net.Dial("tcp", match[1])
+	if err != nil {
+		return err
+	}
+	log.Printf("Successfully connected to reducer %s\n", match[1])
+	msgHandler := messages.NewMessageHandler(conn)
 
-// 	// open up a connection with each reducer node
-// 	handlerMap := make(map[string]*messages.MessageHandler, len(reducerNodes))
-// 	for _, nodeAddr := range reducerNodes {
-// 		msgHandler, err := connectReducer(nodeAddr)
-// 		if err != nil {
-// 			return err
-// 		}
-// 		handlerMap[nodeAddr] = msgHandler
-// 	}
+	// send key value pairs notice
+	msgHandler.SendKeyValueNotice(filesize)
 
-// 	scanner := bufio.NewScanner(tmpFile)
-// 	for scanner.Scan() {
-// 		// split key and value
-// 		words := strings.Split(scanner.Text(), "\t")
+	// send data
+	io.CopyN(msgHandler, file, filesize)
 
-// 		// get key and node location
-// 		key := words[0]
-// 		fnvHash := fnv.New32a()
-// 		fnvHash.Write(scanner.Bytes())
-// 		index := fnvHash.Sum32() % uint32(len(reducerNodes))
+	// remove temp file
+	file.Close()
+	os.Remove(filename)
 
-// 		// now get the value
-// 		value := words[1]
+	// wait for response
+	wrapper, _ := msgHandler.Receive()
+	response := wrapper.GetKeyValueRes()
+	if !response.Ok {
+		return errors.New(response.Message)
+	}
+	return nil
+}
 
-// 		log.Printf("%s: %s, dest = %s\n", key, value, reducerNodes[index])
-// 		// send to appropriate reducer node by using list
+func receiveKeyValueNotice(msgHandler *messages.MessageHandler, keyValueNotice *messages.KeyValueNotice,
+	dest string, shuffleCh chan string) {
 
-// 		// so create a file for each output
+	// open temp file for incoming key value pairs
+	tmpfile, err := ioutil.TempFile(dest, "shuffled_pairs_*")
+	if err != nil {
+		msgHandler.SendKeyValueRes(false, err.Error())
+	}
 
-// 		// // create temp file for so bytes
-// 		// tmpfile, err := ioutil.TempFile(dest, "job_*.so")
-// 		// if err != nil {
-// 		// 	return nil, err
-// 		// }
-// 		// defer os.Remove(tmpfile.Name())
+	io.CopyN(tmpfile, msgHandler, keyValueNotice.Size)
+	msgHandler.SendKeyValueRes(true, "")
+	tmpfile.Close()
 
-// 		// // write bytes to tempfile
-// 		// _, err = tmpfile.Write(mapOrder.Job)
-// 		// if err != nil {
-// 		// 	return nil, err
-// 		// }
-// 		// tmpfile.Close()
-
-// 		// // load the plugin from the temporary file
-// 		// jobPlugin, err = plugin.Open(tmpfile.Name())
-// 		// if err != nil {
-// 		// 	return nil, err
-// 		// }
-
-// 		// // add plugin to cache
-// 		// node.pluginCache[mapOrder.JobHash] = jobPlugin
-// 	}
-
-// 	// close and remove temp file
-// 	tmpFile.Close()
-// 	os.Remove(filename)
-
-// 	return nil
-// }
-
-// func receiveReduceNotice(msgHandler *messages.MessageHandler, reduceNotice *messages.ReduceNotice,
-// 	node *storageNode, dest string) {
-
-// 	log.Printf("Received a reduce notice (I am a reducer): waiting on %d mappers", reduceNotice.NumMappers)
-
-// 	// how to know that all these different message from different nodes belong to one?
-
-// 	// what if i send the files over from each
-
-// }
+	shuffleCh <- tmpfile.Name()
+}
 
 /* ------ Send Messages ------ */
 func sendHeartbeat(node *storageNode) error {
@@ -861,7 +846,9 @@ func sendReplicaRequest(ctrlrAddr string, nodeId string, filename string,
 }
 
 /* ------ Storage Node Threads ------ */
-func handleMessages(conn net.Conn, msgHandler *messages.MessageHandler, ctrlrAddr string, node *storageNode, dest string) {
+func handleMessages(conn net.Conn, msgHandler *messages.MessageHandler, ctrlrAddr string,
+	node *storageNode, dest string, shuffleCh chan string) {
+
 	defer msgHandler.Close()
 	defer conn.Close()
 
@@ -881,9 +868,9 @@ func handleMessages(conn net.Conn, msgHandler *messages.MessageHandler, ctrlrAdd
 		case *messages.Wrapper_ReplicaOrder:
 			receiveReplicaOrder(msgHandler, msg.ReplicaOrder, node, dest)
 		case *messages.Wrapper_JobOrder:
-			receiveJobOrder(msgHandler, msg.JobOrder, node, dest)
-		// case *messages.Wrapper_ReduceNotice:
-		// 	receiveReduceNotice(msgHandler, msg.ReduceNotice, node, dest)
+			receiveJobOrder(msgHandler, msg.JobOrder, node, dest, shuffleCh)
+		case *messages.Wrapper_KeyValueNotice:
+			receiveKeyValueNotice(msgHandler, msg.KeyValueNotice, dest, shuffleCh)
 		case nil:
 			return
 		default:
@@ -902,10 +889,13 @@ func listen(ctrlAddr string, node *storageNode, dest string) error {
 	}
 	log.Println("Listening for client, controller, and yarm messages...")
 
+	// create channel for map reduce communication
+	shuffleCh := make(chan string)
+
 	for {
 		if conn, err := listener.Accept(); err == nil {
 			msgHandler := messages.NewMessageHandler(conn)
-			go handleMessages(conn, msgHandler, ctrlAddr, node, dest)
+			go handleMessages(conn, msgHandler, ctrlAddr, node, dest, shuffleCh)
 			// defer conn.Close()
 		}
 	}

@@ -321,30 +321,39 @@ func (m *MessageHandler) SendMapRes(ok bool, message string, chunkNodes map[stri
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendJobOrder(jobHash string, job []byte, chunks []string,
+func (m *MessageHandler) SendJobOrder(jobHash string, job []byte, isReducer bool, chunks []string,
 	reducerNodes []string, numMappers int) error {
-	msg := JobOrder{JobHash: jobHash, Job: job, Chunks: chunks, ReducerNodes: reducerNodes, NumMappers: int64(numMappers)}
+	msg := JobOrder{JobHash: jobHash, Job: job, IsReducer: isReducer, Chunks: chunks,
+		ReducerNodes: reducerNodes, NumMappers: int64(numMappers)}
 	wrapper := &Wrapper{
 		Msg: &Wrapper_JobOrder{JobOrder: &msg},
 	}
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendMapStatus(ok bool, message string) error {
-	msg := MapStatus{Ok: ok, Message: message}
+func (m *MessageHandler) SendJobStatus(ok bool, message string) error {
+	msg := JobStatus{Ok: ok, Message: message}
 	wrapper := &Wrapper{
-		Msg: &Wrapper_MapStatus{MapStatus: &msg},
+		Msg: &Wrapper_JobStatus{JobStatus: &msg},
 	}
 	return m.Send(wrapper)
 }
 
-// func (m *MessageHandler) SendReducerList(reducerNodes []string) error {
-// 	msg := NodeList{Nodes: reducerNodes}
-// 	wrapper := &Wrapper{
-// 		Msg: &Wrapper_NodeList{NodeList: &msg},
-// 	}
-// 	return m.Send(wrapper)
-// }
+func (m *MessageHandler) SendKeyValueNotice(size int64) error {
+	msg := KeyValueNotice{Size: size}
+	wrapper := &Wrapper{
+		Msg: &Wrapper_KeyValueNotice{KeyValueNotice: &msg},
+	}
+	return m.Send(wrapper)
+}
+
+func (m *MessageHandler) SendKeyValueRes(ok bool, message string) error {
+	msg := KeyValueRes{Ok: ok, Message: message}
+	wrapper := &Wrapper{
+		Msg: &Wrapper_KeyValueRes{KeyValueRes: &msg},
+	}
+	return m.Send(wrapper)
+}
 
 func (m *MessageHandler) Close() {
 	m.conn.Close()

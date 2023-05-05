@@ -75,9 +75,10 @@ message MapReq {
 message JobOrder {
     string job_hash = 1;
     bytes job = 2;
-    repeated string chunks = 3;
-    repeated string reducerNodes = 4;
-    int64 numMappers = 5;
+    bool is_reducer = 3;
+    repeated string chunks = 4;
+    repeated string reducer_nodes = 5;
+    int64 numMappers = 6;
 }
 
 /* ------------ Node messages ------------ */
@@ -115,7 +116,16 @@ message ReplicaReq {
     string chunkname = 3;
 }
 
-message MapStatus {
+message JobStatus {
+    bool ok = 1;
+    string message = 2;
+}
+
+message KeyValueNotice {
+    int64 size = 1;
+}
+
+message KeyValueRes {
     bool ok = 1;
     string message = 2;
 }
@@ -187,17 +197,19 @@ message Wrapper {
         NRetrievalRes n_retrieval_res = 16;
         OrderRes order_res = 17;
         ReplicaReq replica_req = 18;
-        MapStatus map_status = 19;
+        JobStatus job_status = 19;
+        KeyValueNotice key_value_notice = 20;
+        KeyValueRes key_value_res = 21;
 
-        CStorageReq c_storage_req = 20;
-        NStorageReq n_storage_req = 21;
-        CRetrievalReq c_retrieval_req = 22;
-        NRetrievalReq n_retrieval_req = 23;
-        ListReq list_req = 24;
-        NodesReq nodes_req = 25;
-        DeleteReq delete_req = 26;
+        CStorageReq c_storage_req = 22;
+        NStorageReq n_storage_req = 23;
+        CRetrievalReq c_retrieval_req = 24;
+        NRetrievalReq n_retrieval_req = 25;
+        ListReq list_req = 26;
+        NodesReq nodes_req = 27;
+        DeleteReq delete_req = 28;
 
-        Checksum md5 = 27;
-        ChecksumRes checksum_res = 28;
+        Checksum md5 = 29;
+        ChecksumRes checksum_res = 30;
     }
 }
