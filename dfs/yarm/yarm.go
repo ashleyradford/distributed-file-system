@@ -24,7 +24,7 @@ func getFileMapping(msgHandler *messages.MessageHandler, filename string) map[st
 	wrapper, _ := msgHandler.Receive()
 	response := wrapper.GetMapRes()
 	if !response.Ok {
-		fmt.Println(response.Message)
+		log.Println(response.Message)
 		return nil
 	}
 
@@ -32,7 +32,7 @@ func getFileMapping(msgHandler *messages.MessageHandler, filename string) map[st
 	for chunk := range response.ChunkNodes {
 		chunkNodeMap[chunk] = response.ChunkNodes[chunk].Nodes
 	}
-	fmt.Println("Received chunk mappings from controller.")
+	log.Println("Received chunk mappings from controller.")
 
 	return chunkNodeMap
 }
@@ -59,11 +59,11 @@ func selectMappers(chunkNodeMap map[string][]string) map[string][]string {
 		chunkCountMap[minNode] = chunkCountMap[minNode] + 1
 	}
 
-	fmt.Println("-------------\nMapper nodes:\n-------------")
+	log.Println("-------------\nMapper nodes:\n-------------")
 	for node, chunks := range nodeChunkMap {
-		fmt.Printf("%s: %d chunks\n", node, len(chunks))
+		log.Printf("%s: %d chunks\n", node, len(chunks))
 	}
-	fmt.Println()
+	log.Println()
 
 	return nodeChunkMap
 }
@@ -79,11 +79,11 @@ func selectReducers(nodeChunkMap map[string][]string, numReducers int) map[strin
 		}
 	}
 
-	fmt.Println("--------------\nReducer nodes:\n--------------")
+	log.Println("--------------\nReducer nodes:\n--------------")
 	for node := range nodeSet {
-		fmt.Printf("%s\n", node)
+		log.Printf("%s\n", node)
 	}
-	fmt.Println()
+	log.Println()
 
 	return nodeSet
 }
@@ -107,13 +107,37 @@ func sendJob(nodeAddr string, job_hash string, job []byte, isReducer bool, chunk
 
 	// wait for map response
 	wrapper, _ := msgHandler.Receive()
-	msg, _ := wrapper.Msg.(*messages.Wrapper_JobStatus)
-	if msg.JobStatus.Ok {
+	msg := wrapper.GetJobStatus()
+	if msg.Ok {
 		jobChan <- true
-		fmt.Printf("%s: %s\n", nodeAddr, msg.JobStatus.Message)
+		log.Printf("%s: %s\n", nodeAddr, msg.Message)
 	} else {
 		jobChan <- false
-		fmt.Printf("%s: %s\n", nodeAddr, msg.JobStatus.Message)
+		log.Printf("%s: %s\n", nodeAddr, msg.Message)
+	}
+
+	// wait for shuffle sent response
+	wrapper, _ = msgHandler.Receive()
+	msg = wrapper.GetJobStatus()
+	if msg.Ok {
+		jobChan <- true
+		log.Printf("%s: %s\n", nodeAddr, msg.Message)
+	} else {
+		jobChan <- false
+		log.Printf("%s: %s\n", nodeAddr, msg.Message)
+	}
+
+	// if reducer, wait for shuffle grouped response
+	if isReducer {
+		wrapper, _ = msgHandler.Receive()
+		msg := wrapper.GetJobStatus()
+		if msg.Ok {
+			jobChan <- true
+			log.Printf("%s: %s\n", nodeAddr, msg.Message)
+		} else {
+			jobChan <- false
+			log.Printf("%s: %s\n", nodeAddr, msg.Message)
+		}
 	}
 
 	// close message handler and connection
@@ -122,8 +146,9 @@ func sendJob(nodeAddr string, job_hash string, job []byte, isReducer bool, chunk
 }
 
 func main() {
+	log.SetFlags(0)
 	if len(os.Args) < 4 || len(os.Args) > 5 {
-		fmt.Printf("Usage: %s host:port job input-file {reducer-nodes}\n", os.Args[0])
+		log.Printf("Usage: %s host:port job input-file {reducer-nodes}\n", os.Args[0])
 		return
 	}
 
@@ -188,7 +213,7 @@ func main() {
 	}
 
 	// send the job to the mapper nodes
-	fmt.Println("Starting map phase.")
+	log.Println("Starting map phase.")
 	jobChan := make(chan bool, len(nodeChunkMap))
 	for nodeAddr, chunks := range nodeChunkMap {
 		isReducer := false
@@ -201,20 +226,24 @@ func main() {
 
 	// check that all job tasks are complete
 	var failed bool
-	for i := 0; i < len(nodeChunkMap)*2+len(reducerNodeSet); i++ {
+	for i := 0; i < len(nodeChunkMap)*2+len(reducerNodeSet)*2; i++ {
 		success := <-jobChan
 		if !success {
 			failed = true
+			break
 		}
-		if success && i == len(nodeChunkMap)*2-1 {
-			fmt.Println("\nAll data has been sent to reducers.")
+		// if success && i == len(nodeChunkMap)*2-1 {
+		// 	log.Println("\nAll data has been sent to reducers.")
+		// }
+		if success && i == len(nodeChunkMap)*2+len(reducerNodeList)-1 {
+			log.Println("\nStarting reduce phase.")
 		}
 	}
 
 	if failed {
-		fmt.Println("Failed to complete map reduce job, aborting job.")
+		log.Println("Failed to complete map reduce job, aborting job.")
 		return
 	} else {
-		fmt.Println("Map reduce job successfully completed, starting shuffle phase.")
+		log.Println("Map reduce job successfully completed, starting shuffle phase.")
 	}
 }

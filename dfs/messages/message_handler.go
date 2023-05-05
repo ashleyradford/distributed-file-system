@@ -339,8 +339,8 @@ func (m *MessageHandler) SendJobStatus(ok bool, message string) error {
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendKeyValueNotice(size int64) error {
-	msg := KeyValueNotice{Size: size}
+func (m *MessageHandler) SendKeyValueNotice(filename string, size int64) error {
+	msg := KeyValueNotice{Filename: filename, Size: size}
 	wrapper := &Wrapper{
 		Msg: &Wrapper_KeyValueNotice{KeyValueNotice: &msg},
 	}

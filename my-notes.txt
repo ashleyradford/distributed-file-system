@@ -55,10 +55,10 @@ CASES THAT INVOLVE FAULT TOLERANCE
 Limitations and Issues:
 - Not reading to the closest newline, just going to the next newline character
 - Key, value pairs are string, maybe better to have them as bytes?
-- We techncially have a sync phase before we shuffle, which kinda defeats the purpose...
 - Should use serialization for the temp files
 - Not verifiying a checksum of the sent so file
 - No error handling when requesting job for not fully stored file
+- Sending pair files over channel is bad bc then it reaaally limits us to one job at a time
 
 Comments:
 - Making it content aware with current implementation because i relied on the
@@ -79,7 +79,6 @@ Questions:
 - Can only run one job at a time...
 
 Create other temp files and append to those
-
 So we get the four file from the context stuff
 Sort them and send them over
 Okay to let the reducer know hey im a reducer and there are 4 mappers

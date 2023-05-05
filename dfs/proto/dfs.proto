@@ -122,7 +122,8 @@ message JobStatus {
 }
 
 message KeyValueNotice {
-    int64 size = 1;
+    string filename = 1;
+    int64 size = 2;
 }
 
 message KeyValueRes {

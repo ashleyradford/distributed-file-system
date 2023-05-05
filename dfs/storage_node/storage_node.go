@@ -11,13 +11,14 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math"
+	"math/rand"
 	"net"
 	"os"
 	"path"
 	"plugin"
 	"regexp"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 )
@@ -384,7 +385,7 @@ func externalSort(filename string, dest string) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	sortedFile, err := mergeFiles(filename, chunkFiles)
+	sortedFile, err := mergeFiles(filename+"_sorted", chunkFiles, false)
 	if err != nil {
 		return nil, err
 	}
@@ -393,8 +394,8 @@ func externalSort(filename string, dest string) (*os.File, error) {
 
 // splits file at around 10MB (test with 20B)
 func splitFile(filename string, dest string) ([]string, error) {
-	chunksize := int64(10 * math.Pow(2, 20))
-	// chunksize := 20
+	// chunksize := int64(10 * math.Pow(2, 20))
+	chunksize := 20
 	tmpFilenames := make([]string, 0)
 
 	// open temp node file
@@ -468,9 +469,9 @@ func splitFile(filename string, dest string) ([]string, error) {
 	return tmpFilenames, nil
 }
 
-func mergeFiles(filename string, chunkfiles []string) (*os.File, error) {
+func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File, error) {
 	// open file to write to (check if file already exists)
-	sortedfile, err := os.OpenFile(filename+"_sorted", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
+	sortedfile, err := os.OpenFile(filepath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -499,6 +500,7 @@ func mergeFiles(filename string, chunkfiles []string) (*os.File, error) {
 
 	// merge sorted files
 	done := 0
+	prevKey := "" // only for grouping
 	for {
 		// set curr min, make sure it's not "" (sorry)
 		minIndex := 0
@@ -519,8 +521,20 @@ func mergeFiles(filename string, chunkfiles []string) (*os.File, error) {
 			}
 		}
 
-		// write the min key to output file
-		sortedfile.Write(append([]byte(helperSlice[minIndex]), []byte("\n")...))
+		line := strings.Split(helperSlice[minIndex], "\t")
+		if groupFlag {
+			if line[0] == prevKey {
+				sortedfile.Write(append([]byte("\t"), []byte(line[1])...))
+			} else if prevKey == "" { // first key
+				sortedfile.Write([]byte(helperSlice[minIndex]))
+			} else {
+				sortedfile.Write(append([]byte("\n"), []byte(helperSlice[minIndex])...))
+			}
+
+		} else {
+			// write the min key to output file
+			sortedfile.Write(append([]byte(helperSlice[minIndex]), []byte("\n")...))
+		}
 
 		// incremenet index of minimum element and check if end
 		if scanners[minIndex].Scan() {
@@ -530,8 +544,15 @@ func mergeFiles(filename string, chunkfiles []string) (*os.File, error) {
 			done++
 		}
 
+		// update previous key
+		prevKey = line[0]
+
 		// check if all files are done
 		if done == m {
+			if groupFlag {
+				// add last newline
+				sortedfile.Write([]byte("\n"))
+			}
 			break
 		}
 	}
@@ -599,12 +620,32 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 		tmpFiles := make([]string, jobOrder.NumMappers)
 		for i := 0; i < int(jobOrder.NumMappers); i++ {
 			tmpFiles[i] = <-shuffleCh
+			log.Printf("Received: %s", tmpFiles[i])
 		}
 
-		// now merge sort and group at the same time (!!!!!!!)
+		// now merge sort and group at the same time
+		log.Println("Grouping key value pairs")
+		rand.Seed(time.Now().UnixNano())
+		filepath := fmt.Sprintf("%s/shuffled_grouped_pairs_%09d", dest, rand.Int()%1000000000)
+		sortedFile, err := mergeFiles(filepath, tmpFiles, true)
+		if err != nil {
+			msgHandler.SendJobStatus(false, fmt.Sprintf("error merging incoming pairs: %s", err.Error()))
+			return
+		}
+		log.Println(sortedFile) // REMOVE PRINT!!!!!
 
+		msgHandler.SendJobStatus(true, "successfully received and grouped")
 	}
+
+	// send status saying that shuffle is complete, beg reduce phase
+
+	// do reduction
+
 }
+
+// func reduceFile(filepath string, dest string, job MapReduce, context *util.Context) {
+
+// }
 
 func sendPairs(filename string) error {
 	// open sorted temp file
@@ -637,7 +678,7 @@ func sendPairs(filename string) error {
 	msgHandler := messages.NewMessageHandler(conn)
 
 	// send key value pairs notice
-	msgHandler.SendKeyValueNotice(filesize)
+	msgHandler.SendKeyValueNotice(basename, filesize)
 
 	// send data
 	io.CopyN(msgHandler, file, filesize)
@@ -663,6 +704,8 @@ func receiveKeyValueNotice(msgHandler *messages.MessageHandler, keyValueNotice *
 	if err != nil {
 		msgHandler.SendKeyValueRes(false, err.Error())
 	}
+
+	log.Printf("Received key value pairs notice of size: %d\n", keyValueNotice.GetSize())
 
 	io.CopyN(tmpfile, msgHandler, keyValueNotice.Size)
 	msgHandler.SendKeyValueRes(true, "")
