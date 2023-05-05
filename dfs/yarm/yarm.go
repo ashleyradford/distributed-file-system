@@ -10,6 +10,8 @@ import (
 	"net"
 	"os"
 	"path"
+	"strconv"
+	"time"
 )
 
 const INTER_DEST = "/bigdata/students/aeradford/mydfs/intermediate"
@@ -31,12 +33,12 @@ func getFileMapping(msgHandler *messages.MessageHandler, filename string) map[st
 	for chunk := range response.ChunkNodes {
 		chunkNodeMap[chunk] = response.ChunkNodes[chunk].Nodes
 	}
-	log.Printf("Received chunk mappings from controller.")
+	fmt.Println("Received chunk mappings from controller.")
 
 	return chunkNodeMap
 }
 
-func determineMappers(chunkNodeMap map[string][]string) map[string][]string {
+func selectMappers(chunkNodeMap map[string][]string) map[string][]string {
 	chunkCountMap := make(map[string]int)
 	nodeChunkMap := make(map[string][]string)
 
@@ -58,15 +60,17 @@ func determineMappers(chunkNodeMap map[string][]string) map[string][]string {
 		chunkCountMap[minNode] = chunkCountMap[minNode] + 1
 	}
 
-	log.Println("Mapper nodes: ")
+	fmt.Println("-------------\nMapper nodes:\n-------------")
 	for node, chunks := range nodeChunkMap {
-		log.Printf("    %s: %d chunks", node, len(chunks))
+		fmt.Printf("%s: %d chunks\n", node, len(chunks))
 	}
+	fmt.Println()
 
 	return nodeChunkMap
 }
 
-func sendJob(nodeAddr string, job_hash string, job []byte, chunks []string, ok chan bool) {
+func sendJob(nodeAddr string, job_hash string, job []byte, chunks []string, reducerNodes []string,
+	numMappers int, ok chan bool, shuffleCh chan []string) {
 	// try to connect to given node
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
@@ -79,23 +83,71 @@ func sendJob(nodeAddr string, job_hash string, job []byte, chunks []string, ok c
 	msgHandler := messages.NewMessageHandler(conn)
 
 	// send the map order
-	msgHandler.SendMapOrder(job_hash, job, chunks)
+	msgHandler.SendJobOrder(job_hash, job, chunks, reducerNodes, numMappers)
 
 	// wait for map response
 	wrapper, _ := msgHandler.Receive()
 	msg, _ := wrapper.Msg.(*messages.Wrapper_MapStatus)
 	if msg.MapStatus.Ok {
 		ok <- true
-		log.Printf("%s: %s\n", nodeAddr, msg.MapStatus.Message)
+		fmt.Printf("%s: %s\n", nodeAddr, msg.MapStatus.Message)
 	} else {
 		ok <- false
-		log.Printf("%s: %s\n", nodeAddr, msg.MapStatus.Message)
+		fmt.Printf("%s: %s\n", nodeAddr, msg.MapStatus.Message)
 	}
+
+	// check when ready to shuffle, wait for map phase completion
+	// reducerNodes := <-shuffleCh
+	// if reducerNodes != nil {
+	// 	msgHandler.SendReducerList(reducerNodes)
+	// }
+
+	// wait for response letting manager know its done sending data to reducer
 
 	// close message handler and connection
 	msgHandler.Close()
 	conn.Close()
 }
+
+func selectReducers(nodeChunkMap map[string][]string, numReducers int) []string {
+	var nodes []string
+	count := 0
+	for node := range nodeChunkMap {
+		nodes = append(nodes, node)
+		count++
+		if count == numReducers {
+			break
+		}
+	}
+
+	fmt.Println("--------------\nReducer nodes:\n--------------")
+	for _, node := range nodes {
+		fmt.Printf("%s\n", node)
+	}
+	fmt.Println()
+
+	return nodes
+}
+
+// func notifyReducer(nodeAddr string, numMappers int) error {
+// 	// open up a tcp connection with specified node
+// 	conn, err := net.Dial("tcp", nodeAddr)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// log.Printf("Successfully connected to reducer %s\n", nodeAddr)
+// 	msgHandler := messages.NewMessageHandler(conn)
+
+// 	// let reducer know data is coming
+// 	// msgHandler.SendReduceNotice(numMappers)
+
+// 	// close message handler and connection
+// 	msgHandler.Close()
+// 	conn.Close()
+
+// 	return nil
+// }
 
 func main() {
 	if len(os.Args) < 4 || len(os.Args) > 5 {
@@ -139,14 +191,14 @@ func main() {
 	defer msgHandler.Close()
 
 	// check number of reducers given
-	// numReducers := 4
-	// if len(os.Args) == 5 {
-	// 	numReducers, err = strconv.Atoi(os.Args[4])
-	// 	if err != nil {
-	// 		fmt.Println(err)
-	// 		return
-	// 	}
-	// }
+	numReducers := 4
+	if len(os.Args) == 5 {
+		numReducers, err = strconv.Atoi(os.Args[4])
+		if err != nil {
+			log.Println(err)
+			return
+		}
+	}
 
 	// check that file exists and map chunks to nodes
 	chunkNodeMap := getFileMapping(msgHandler, filename)
@@ -154,12 +206,26 @@ func main() {
 		log.Println("Error determining nodes for mapper jobs")
 		return
 	}
-	nodeChunkMap := determineMappers(chunkNodeMap)
+
+	// determine mapper and reducer nodes
+	nodeChunkMap := selectMappers(chunkNodeMap)
+	reducerNodes := selectReducers(nodeChunkMap, numReducers)
+
+	// for _, nodeAddr := range reducerNodes {
+	// 	err := notifyReducer(nodeAddr, len(nodeChunkMap))
+	// 	if err != nil {
+	// 		fmt.Println("Failed to notify reducer node, aborting job.")
+	// 		return
+	// 	}
+	// }
 
 	// send the job to the mapper nodes
+	fmt.Println("Starting map phase.")
 	mapStatus := make(chan bool, len(nodeChunkMap))
+	shuffleCh := make(chan []string, len(nodeChunkMap))
 	for nodeAddr, chunks := range nodeChunkMap {
-		go sendJob(nodeAddr, string(fmt.Sprintf("%x", md5Hash.Sum(nil))), soBytes.Bytes(), chunks, mapStatus)
+		go sendJob(nodeAddr, string(fmt.Sprintf("%x", md5Hash.Sum(nil))), soBytes.Bytes(),
+			chunks, reducerNodes, len(nodeChunkMap), mapStatus, shuffleCh)
 	}
 
 	// check that all map tasks are complete
@@ -172,11 +238,18 @@ func main() {
 	}
 
 	if failed {
-		fmt.Println("Failed to complete map task.")
+		fmt.Println("Failed to complete map phase, aborting job.")
+		return
 	} else {
-		fmt.Println("Map stage sucessfully completed.")
+		fmt.Printf("Map phase successfully completed, starting shuffle phase.\n\n")
 	}
 
+	// now let opened node connections know where the reducers are
+	for i := 0; i < len(nodeChunkMap); i++ {
+		shuffleCh <- reducerNodes
+	}
+
+	time.Sleep(5 * time.Second)
 	// push job to computation nodes
 	// pushJob(nodeChunkMap, numReducers)
 }

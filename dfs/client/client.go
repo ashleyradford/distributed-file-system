@@ -468,11 +468,11 @@ func getList(msgHandler *messages.MessageHandler) {
 
 	// wait for response from controller
 	wrapper, _ := msgHandler.Receive()
-	msg, _ := wrapper.Msg.(*messages.Wrapper_ListRes)
+	msg := wrapper.GetListRes()
 
-	sort.Strings(msg.ListRes.Filenames)
+	sort.Strings(msg.Filenames)
 
-	for _, filename := range msg.ListRes.Filenames {
+	for _, filename := range msg.Filenames {
 		fmt.Println(filename)
 	}
 }
@@ -556,7 +556,7 @@ func main() {
 			val, _ := strconv.ParseFloat(os.Args[4], 64)
 			chunksize = int64(val * math.Pow(2, 20)) // convert from MB to bytes
 		} else {
-			chunksize = int64(math.Pow(2, 20)) // 1MB default chunk size
+			chunksize = int64(10 * math.Pow(2, 20)) // 10MB default chunk size
 		}
 		storeFile(msgHandler, filepath, chunksize)
 	case "get":

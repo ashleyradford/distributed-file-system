@@ -72,10 +72,12 @@ message MapReq {
     string filename = 1;
 }
 
-message MapOrder {
+message JobOrder {
     string job_hash = 1;
     bytes job = 2;
     repeated string chunks = 3;
+    repeated string reducerNodes = 4;
+    int64 numMappers = 5;
 }
 
 /* ------------ Node messages ------------ */
@@ -177,7 +179,7 @@ message Wrapper {
         MapRes map_res = 10;
 
         MapReq map_req = 11;
-        MapOrder map_order = 12;
+        JobOrder job_order = 12;
 
         JoinReq join_req = 13;
         Heartbeat heartbeat = 14;

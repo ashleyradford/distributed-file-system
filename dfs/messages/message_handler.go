@@ -321,10 +321,11 @@ func (m *MessageHandler) SendMapRes(ok bool, message string, chunkNodes map[stri
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendMapOrder(jobHash string, job []byte, chunks []string) error {
-	msg := MapOrder{JobHash: jobHash, Job: job, Chunks: chunks}
+func (m *MessageHandler) SendJobOrder(jobHash string, job []byte, chunks []string,
+	reducerNodes []string, numMappers int) error {
+	msg := JobOrder{JobHash: jobHash, Job: job, Chunks: chunks, ReducerNodes: reducerNodes, NumMappers: int64(numMappers)}
 	wrapper := &Wrapper{
-		Msg: &Wrapper_MapOrder{MapOrder: &msg},
+		Msg: &Wrapper_JobOrder{JobOrder: &msg},
 	}
 	return m.Send(wrapper)
 }
@@ -336,6 +337,14 @@ func (m *MessageHandler) SendMapStatus(ok bool, message string) error {
 	}
 	return m.Send(wrapper)
 }
+
+// func (m *MessageHandler) SendReducerList(reducerNodes []string) error {
+// 	msg := NodeList{Nodes: reducerNodes}
+// 	wrapper := &Wrapper{
+// 		Msg: &Wrapper_NodeList{NodeList: &msg},
+// 	}
+// 	return m.Send(wrapper)
+// }
 
 func (m *MessageHandler) Close() {
 	m.conn.Close()

@@ -11,9 +11,11 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"net"
 	"os"
 	"plugin"
+	"sort"
 	"sync"
 	"time"
 )
@@ -23,7 +25,7 @@ var m = sync.RWMutex{}
 const DEST = "/bigdata/students/aeradford/mydfs"
 
 type MapReduce interface {
-	Map(line_number int, line_text string) map[string]string
+	Map(line_number int, line_text string, context *util.Context) error
 	Reduce()
 }
 
@@ -280,7 +282,7 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retrieveReq *m
 	}
 }
 
-func getPlugin(mapOrder *messages.MapOrder, dest string, node *storageNode) (MapReduce, error) {
+func getPlugin(mapOrder *messages.JobOrder, dest string, node *storageNode) (MapReduce, error) {
 
 	// check if so file has been hashed
 	var jobPlugin *plugin.Plugin
@@ -327,7 +329,7 @@ func getPlugin(mapOrder *messages.MapOrder, dest string, node *storageNode) (Map
 	return job, nil
 }
 
-func mapFile(filepath string, job MapReduce, tmpfile *os.File) (linesParsed int, err error) {
+func mapFile(filepath string, dest string, job MapReduce, context *util.Context) (linesParsed int, err error) {
 	// open chunk file
 	chunkFile, err := os.OpenFile(filepath, os.O_RDONLY, 0644)
 	if err != nil {
@@ -341,46 +343,224 @@ func mapFile(filepath string, job MapReduce, tmpfile *os.File) (linesParsed int,
 	scanner.Buffer(make([]byte, buf), buf)
 	lineNum := 0
 
-	var kvPairs map[string]string
 	for scanner.Scan() {
 		lineText := scanner.Text()
-		kvPairs = job.Map(lineNum, lineText)
-		if len(kvPairs) > 0 {
-			// write key value pairs to temp file
-			for key, value := range kvPairs {
-				if _, err = tmpfile.Write(append([]byte(key), []byte("\n")...)); err != nil {
-					return 0, err
-				}
-				if _, err = tmpfile.Write(append([]byte(value), []byte("\n")...)); err != nil {
-					return 0, err
-				}
-			}
-			lineNum++
+		err := job.Map(lineNum, lineText, context)
+		if err != nil {
+			return lineNum, err
 		}
+		lineNum++
 	}
 
 	// throw error if line is too big
 	if scanner.Err() != nil {
-		log.Println(scanner.Err())
+		return lineNum, scanner.Err()
+	}
+
+	// done writing to node files, close temp files
+	context.CloseFiles()
+
+	// now we must sort before we send to reducers
+	tmpFilenames := context.GetFilenames()
+	sortedFiles := make([]*os.File, 0)
+	for _, filename := range tmpFilenames {
+		sorted, err := externalSort(filename, dest)
+		if err != nil {
+			return lineNum, err
+		}
+		sortedFiles = append(sortedFiles, sorted)
+	}
+	// remove the old unsorted files
+	context.RemoveFiles()
+
+	// send sorted files to reducer nodes
+	for _, file := range sortedFiles {
+		print(file)
+		// os.Remove(file.Name())
 	}
 
 	return lineNum, nil
 }
 
-func receiveMapOrder(msgHandler *messages.MessageHandler, mapOrder *messages.MapOrder,
+func externalSort(filename string, dest string) (*os.File, error) {
+	chunkFiles, err := splitFile(filename, dest)
+	if err != nil {
+		return nil, err
+	}
+	sortedFile, err := mergeFiles(filename, chunkFiles)
+	if err != nil {
+		return nil, err
+	}
+	fmt.Println(sortedFile)
+	return sortedFile, nil
+}
+
+// splits file at around 10MB (test with 20B)
+func splitFile(filename string, dest string) ([]string, error) {
+	chunksize := int64(10 * math.Pow(2, 20))
+	// chunksize := 20
+	tmpFilenames := make([]string, 0)
+
+	// open temp node file
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+
+	// get file size
+	info, err := os.Stat(filename)
+	if err != nil {
+		return nil, err
+	}
+	filesize := int(info.Size())
+
+	// split file into line array by chunksize
+	offset := 0
+	for {
+		lines := make([]string, 0)
+		file.Seek(0, offset)
+
+		// read the next chunk of data
+		var buffer []byte
+		bytesRead := 0
+		for {
+			b := make([]byte, 1)
+			n, err := file.Read(b)
+			offset += n
+			bytesRead += n
+			if err != nil {
+				if err == io.EOF {
+					break
+				}
+				return nil, err
+			}
+			buffer = append(buffer, b[0])
+			if b[0] == '\n' {
+				lines = append(lines, string(buffer))
+				buffer = buffer[:0] // reset buffer
+				if bytesRead >= int(chunksize) {
+					break
+				}
+			}
+		}
+
+		// sort the lines (by the keys)
+		sort.Strings(lines)
+		log.Println("GROUP OF LINES")
+		log.Println(lines)
+
+		// output sorted keys to temp file
+		tmpfile, err := ioutil.TempFile(dest, "sorted_pairs_*")
+		if err != nil {
+			return nil, err
+		}
+
+		// write bytes to tempfile
+		for _, line := range lines {
+			_, err = tmpfile.Write([]byte(line))
+			if err != nil {
+				return nil, err
+			}
+		}
+		tmpfile.Close()
+		tmpFilenames = append(tmpFilenames, tmpfile.Name())
+
+		if offset >= filesize {
+			break
+		}
+	}
+
+	return tmpFilenames, nil
+}
+
+func mergeFiles(filename string, chunkfiles []string) (*os.File, error) {
+	// open file to write to (check if file already exists)
+	sortedfile, err := os.OpenFile(filename+"_sorted", os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
+	if err != nil {
+		return nil, err
+	}
+	defer sortedfile.Close()
+
+	m := len(chunkfiles)
+	helperSlice := make([]string, m)
+	scanners := make([]*bufio.Scanner, 0)
+
+	// open all the temp stored files
+	for i, filename := range chunkfiles {
+		// open temp stored file
+		file, err := os.Open(filename)
+		if err != nil {
+			return nil, err
+		}
+		defer file.Close()
+		defer os.Remove(filename)
+
+		// add first key of each file to helper slice
+		scanners = append(scanners, bufio.NewScanner(file))
+		if scanners[i].Scan() {
+			helperSlice[i] = scanners[i].Text()
+		}
+	}
+
+	// merge sorted files
+	done := 0
+	for {
+		// set curr min, make sure it's not "" (sorry)
+		minIndex := 0
+		if helperSlice[minIndex] == "" {
+			for j := 0; j < m; j++ {
+				if helperSlice[j] != "" {
+					minIndex = j
+				}
+			}
+		}
+
+		// find the minimum in slice
+		for j := 0; j < m; j++ {
+			if helperSlice[j] != "" {
+				if helperSlice[j] < helperSlice[minIndex] {
+					minIndex = j
+				}
+			}
+		}
+
+		// write the min key to output file
+		sortedfile.Write(append([]byte(helperSlice[minIndex]), []byte("\n")...))
+
+		// incremenet index of minimum element and check if end
+		if scanners[minIndex].Scan() {
+			helperSlice[minIndex] = scanners[minIndex].Text()
+		} else {
+			helperSlice[minIndex] = ""
+			done++
+		}
+
+		// check if all files are done
+		if done == m {
+			break
+		}
+	}
+
+	return sortedfile, nil
+}
+
+func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.JobOrder,
 	node *storageNode, dest string) {
 
 	log.Println("Received map reduce job")
 
-	job, err := getPlugin(mapOrder, dest, node)
+	job, err := getPlugin(jobOrder, dest, node)
 	if job == nil {
 		// send failed message back
 		msgHandler.SendMapStatus(false, err.Error())
 		return
 	}
 
+	fmt.Println(jobOrder.ReducerNodes)
+
 	// create temp file for emitted key value pairs
-	tmpfile, err := ioutil.TempFile(dest, "kv_pairs_*.txt")
+	context, err := util.NewContext(dest, jobOrder.ReducerNodes)
 	if err != nil {
 		// send failed message back
 		msgHandler.SendMapStatus(false, err.Error())
@@ -389,9 +569,9 @@ func receiveMapOrder(msgHandler *messages.MessageHandler, mapOrder *messages.Map
 
 	// perform map task on each chunk
 	var linesParsed int
-	for _, chunkFile := range mapOrder.Chunks {
+	for _, chunkFile := range jobOrder.Chunks {
 		filepath := dest + "/" + chunkFile
-		linesParsed, err = mapFile(filepath, job, tmpfile)
+		linesParsed, err = mapFile(filepath, dest, job, context)
 		if err != nil {
 			// send failed message back
 			msgHandler.SendMapStatus(false, err.Error())
@@ -399,12 +579,112 @@ func receiveMapOrder(msgHandler *messages.MessageHandler, mapOrder *messages.Map
 		}
 	}
 
-	tmpfile.Close()
-	// os.Remove(tmpfile.Name())
-
 	// send map status back to resource manager
-	msgHandler.SendMapStatus(true, fmt.Sprintf("Successfully completed map task, %d lines parsed", linesParsed))
+	msgHandler.SendMapStatus(true, fmt.Sprintf("successfully completed map task, %d lines parsed", linesParsed))
+
+	// wait for response with list of reducer nodes
+	// wrapper, _ := msgHandler.Receive()
+	// response := wrapper.GetNodeList()
+
+	// begin shuffle phase
+	// err = shufflePairs(context.GetName(), response.Nodes)
+	// if err != nil {
+	// 	// send message back to manager letting know an error occurred
+	// }
+
+	// send message back to manager letting know all data has been sent to reducers
 }
+
+// func connectReducer(nodeAddr string) (*messages.MessageHandler, error) {
+// 	// open up a tcp connection with specified node
+// 	conn, err := net.Dial("tcp", nodeAddr)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	log.Printf("Successfully connected to reducer %s\n", nodeAddr)
+// 	msgHandler := messages.NewMessageHandler(conn)
+
+// 	return msgHandler, nil
+// }
+
+// func shufflePairs(filename string, reducerNodes []string) error {
+// 	// open temp file with all the pairs
+// 	tmpFile, err := os.Open(filename)
+// 	if err != nil {
+// 		return err
+// 	}
+
+// 	// open up a connection with each reducer node
+// 	handlerMap := make(map[string]*messages.MessageHandler, len(reducerNodes))
+// 	for _, nodeAddr := range reducerNodes {
+// 		msgHandler, err := connectReducer(nodeAddr)
+// 		if err != nil {
+// 			return err
+// 		}
+// 		handlerMap[nodeAddr] = msgHandler
+// 	}
+
+// 	scanner := bufio.NewScanner(tmpFile)
+// 	for scanner.Scan() {
+// 		// split key and value
+// 		words := strings.Split(scanner.Text(), "\t")
+
+// 		// get key and node location
+// 		key := words[0]
+// 		fnvHash := fnv.New32a()
+// 		fnvHash.Write(scanner.Bytes())
+// 		index := fnvHash.Sum32() % uint32(len(reducerNodes))
+
+// 		// now get the value
+// 		value := words[1]
+
+// 		log.Printf("%s: %s, dest = %s\n", key, value, reducerNodes[index])
+// 		// send to appropriate reducer node by using list
+
+// 		// so create a file for each output
+
+// 		// // create temp file for so bytes
+// 		// tmpfile, err := ioutil.TempFile(dest, "job_*.so")
+// 		// if err != nil {
+// 		// 	return nil, err
+// 		// }
+// 		// defer os.Remove(tmpfile.Name())
+
+// 		// // write bytes to tempfile
+// 		// _, err = tmpfile.Write(mapOrder.Job)
+// 		// if err != nil {
+// 		// 	return nil, err
+// 		// }
+// 		// tmpfile.Close()
+
+// 		// // load the plugin from the temporary file
+// 		// jobPlugin, err = plugin.Open(tmpfile.Name())
+// 		// if err != nil {
+// 		// 	return nil, err
+// 		// }
+
+// 		// // add plugin to cache
+// 		// node.pluginCache[mapOrder.JobHash] = jobPlugin
+// 	}
+
+// 	// close and remove temp file
+// 	tmpFile.Close()
+// 	os.Remove(filename)
+
+// 	return nil
+// }
+
+// func receiveReduceNotice(msgHandler *messages.MessageHandler, reduceNotice *messages.ReduceNotice,
+// 	node *storageNode, dest string) {
+
+// 	log.Printf("Received a reduce notice (I am a reducer): waiting on %d mappers", reduceNotice.NumMappers)
+
+// 	// how to know that all these different message from different nodes belong to one?
+
+// 	// what if i send the files over from each
+
+// }
 
 /* ------ Send Messages ------ */
 func sendHeartbeat(node *storageNode) error {
@@ -451,9 +731,9 @@ func sendJoin(ctrlrAddr string, node *storageNode) error {
 
 	// wait for join response
 	wrapper, _ := msgHandler.Receive()
-	msg, _ := wrapper.Msg.(*messages.Wrapper_JoinRes)
-	if msg.JoinRes.Accept {
-		node.nodeId = msg.JoinRes.NodeId
+	msg := wrapper.GetJoinRes()
+	if msg.Accept {
+		node.nodeId = msg.NodeId
 		log.Println("Successfully joined controller")
 	} else {
 		log.Println("Could not join controller.")
@@ -600,8 +880,10 @@ func handleMessages(conn net.Conn, msgHandler *messages.MessageHandler, ctrlrAdd
 			receiveRetrievalRequest(msgHandler, msg.NRetrievalReq, node, dest)
 		case *messages.Wrapper_ReplicaOrder:
 			receiveReplicaOrder(msgHandler, msg.ReplicaOrder, node, dest)
-		case *messages.Wrapper_MapOrder:
-			receiveMapOrder(msgHandler, msg.MapOrder, node, dest)
+		case *messages.Wrapper_JobOrder:
+			receiveJobOrder(msgHandler, msg.JobOrder, node, dest)
+		// case *messages.Wrapper_ReduceNotice:
+		// 	receiveReduceNotice(msgHandler, msg.ReduceNotice, node, dest)
 		case nil:
 			return
 		default:

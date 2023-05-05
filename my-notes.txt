@@ -52,22 +52,34 @@ CASES THAT INVOLVE FAULT TOLERANCE
       c) need to check that hasvnt been in pending since timeout (to combat against reps that never made it)
 3) file is corrupted, node requests a replica from controller who gives it a buddy to get it from
 
-Limitations:
+Limitations and Issues:
 - Not reading to the closest newline, just going to the next newline character
 - Key, value pairs are string, maybe better to have them as bytes?
+- We techncially have a sync phase before we shuffle, which kinda defeats the purpose...
+- Should use serialization for the temp files
+- Not verifiying a checksum of the sent so file
+- No error handling when requesting job for not fully stored file
 
-Issues:
+Comments:
 - Making it content aware with current implementation because i relied on the
   offset in the file name. Which made this a very challenging problem if i 
   wanted to treat data as a stream and not read it in twice.
-- Not verifiying a checksum of the sent so file
 
 Test commands:
 ~/go/bin/client orion05:24000 put ilovecats.txt 0.00004
 ~/go/bin/yarm orion05:24000 word_count/word_count.so ilovecats.txt
-go build -buildmode=plugin word_count.go 
+go build -buildmode=plugin word_count.go
 
 Questions:
 - Is letting manager know when all map jobs are complete on a single node?
   Or should we be doing it affter each line?
-- Is the temp file design a bad idea?
+- Are we supposed to be sorting during the shuffle phase?
+- I am waiting until map phase is done...is this bad?
+- Wait, we don't need to close the conns right?
+- Can only run one job at a time...
+
+Create other temp files and append to those
+
+So we get the four file from the context stuff
+Sort them and send them over
+Okay to let the reducer know hey im a reducer and there are 4 mappers
