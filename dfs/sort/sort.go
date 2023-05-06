@@ -18,7 +18,7 @@ func (m mapReduce) Map(line_number int, line_text string, context *util.Context)
 		if err != nil {
 			return err
 		}
-		if value > 5 {
+		if value > 40 {
 			err := context.Write(count, word)
 			if err != nil {
 				return err

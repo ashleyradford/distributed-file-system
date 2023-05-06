@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"os"
 	"path"
@@ -51,10 +52,6 @@ func selectMappers(chunkNodeMap map[string][]string) map[string][]string {
 			}
 		}
 
-		// add chunk to node with smallest count
-		if _, ok := nodeChunkMap[minNode]; ok {
-			nodeChunkMap[minNode] = make([]string, 0)
-		}
 		nodeChunkMap[minNode] = append(nodeChunkMap[minNode], chunk)
 		chunkCountMap[minNode] = chunkCountMap[minNode] + 1
 	}
@@ -198,8 +195,15 @@ func main() {
 	msgHandler := messages.NewMessageHandler(conn)
 	defer msgHandler.Close()
 
+	// check that file exists and map chunks to nodes
+	chunkNodeMap := getFileMapping(msgHandler, filename)
+	if chunkNodeMap == nil {
+		log.Println("Error determining nodes for mapper jobs")
+		return
+	}
+
 	// check number of reducers given
-	numReducers := 4
+	numReducers := int(math.Min(4, float64(len(chunkNodeMap))))
 	if len(os.Args) == 5 {
 		numReducers, err = strconv.Atoi(os.Args[4])
 		if err != nil {
@@ -207,11 +211,8 @@ func main() {
 			return
 		}
 	}
-
-	// check that file exists and map chunks to nodes
-	chunkNodeMap := getFileMapping(msgHandler, filename)
-	if chunkNodeMap == nil {
-		log.Println("Error determining nodes for mapper jobs")
+	if numReducers > len(chunkNodeMap) {
+		log.Println("Number of reducers is larger than number of mappers.\nEither let manager choose or enter a smaller number.")
 		return
 	}
 
@@ -245,7 +246,6 @@ func main() {
 			break
 		}
 	}
-
 	if failed {
 		log.Println("Failed to complete map reduce job, aborting job.")
 		return

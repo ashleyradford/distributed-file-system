@@ -18,7 +18,7 @@ import (
 	"os/exec"
 	"os/user"
 	"path"
-	helper "path/filepath"
+	"path/filepath"
 	"plugin"
 	"regexp"
 	"sort"
@@ -336,9 +336,9 @@ func getPlugin(mapOrder *messages.JobOrder, dest string, node *storageNode) (Map
 	return job, nil
 }
 
-func mapFile(filepath string, dest string, job MapReduce, context *util.Context) (linesParsed int, err error) {
+func mapFile(path string, dest string, job MapReduce, context *util.Context) (linesParsed int, err error) {
 	// open chunk file
-	chunkFile, err := os.OpenFile(filepath, os.O_RDONLY, 0644)
+	chunkFile, err := os.OpenFile(path, os.O_RDONLY, 0644)
 	if err != nil {
 		return 0, err
 	}
@@ -363,9 +363,6 @@ func mapFile(filepath string, dest string, job MapReduce, context *util.Context)
 	if scanner.Err() != nil {
 		return lineNum, scanner.Err()
 	}
-
-	// done writing to node files, close temp files
-	context.CloseFiles()
 
 	return lineNum, nil
 }
@@ -482,9 +479,9 @@ func splitFile(filename string, dest string, stringSort bool) ([]string, error) 
 	return tmpFilenames, nil
 }
 
-func mergeFiles(filepath string, chunkfiles []string, groupFlag bool, strSort bool) (*os.File, error) {
+func mergeFiles(path string, chunkfiles []string, groupFlag bool, strSort bool) (*os.File, error) {
 	// open file to write to (check if file already exists)
-	sortedfile, err := os.OpenFile(filepath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
+	sortedfile, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +499,7 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool, strSort bo
 			return nil, err
 		}
 		defer file.Close()
-		// defer os.Remove(filename)
+		defer os.Remove(filename)
 
 		// add first key of each file to helper slice
 		scanners = append(scanners, bufio.NewScanner(file))
@@ -612,16 +609,19 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 	}
 
 	// perform map task on each chunk
-	var linesParsed int
+	linesParsed := 0
 	for _, chunkFile := range jobOrder.Chunks {
-		filepath := dest + "/" + chunkFile
-		linesParsed, err = mapFile(filepath, dest, job, context)
+		path := dest + "/" + chunkFile
+		count, err := mapFile(path, dest, job, context)
+		linesParsed += count
 		if err != nil {
 			// send failed message back
 			msgHandler.SendJobStatus(false, err.Error(), "")
 			return
 		}
 	}
+	// done writing to node files, close temp files
+	context.CloseFiles()
 
 	// send map status back to resource manager
 	msgHandler.SendJobStatus(true, fmt.Sprintf("completed map task, %d lines parsed", linesParsed), "")
@@ -657,8 +657,8 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 		// now merge sort and group at the same time
 		log.Println("Grouping key value pairs")
 		rand.Seed(time.Now().UnixNano())
-		filepath := fmt.Sprintf("%s/shuffled_grouped_pairs_%09d", dest, rand.Int()%1000000000)
-		groupedFile, err := mergeFiles(filepath, tmpFiles, true, context.IsStringCompare())
+		path := fmt.Sprintf("%s/shuffled_grouped_pairs_%09d", dest, rand.Int()%1000000000)
+		groupedFile, err := mergeFiles(path, tmpFiles, true, context.IsStringCompare())
 		if err != nil {
 			msgHandler.SendJobStatus(false, fmt.Sprintf("error merging incoming pairs: %s", err.Error()), "")
 			return
@@ -668,7 +668,7 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 
 		// now reduce the file
 		output := jobOrder.Filename
-		extension := helper.Ext(output)
+		extension := filepath.Ext(output)
 		name := output[0 : len(output)-len(extension)]
 		outputName, err := reduceFile(groupedFile.Name(), dest, name, job)
 		if err != nil {
@@ -695,7 +695,7 @@ func storeFile(filename string) error {
 		return err
 	}
 
-	execPath := helper.Join(usr.HomeDir, "go", "bin", "client")
+	execPath := filepath.Join(usr.HomeDir, "go", "bin", "client")
 	cmd := exec.Command(execPath, os.Args[1], "put", filename)
 	output, err := cmd.Output()
 	if err != nil {
@@ -705,14 +705,14 @@ func storeFile(filename string) error {
 	log.Print(strings.TrimSuffix(string(output), "\n"))
 
 	// remove temp output file
-	// os.Remove(filename)
+	os.Remove(filename)
 
 	return nil
 }
 
-func reduceFile(filepath string, dest string, outputName string, job MapReduce) (string, error) {
+func reduceFile(path string, dest string, outputName string, job MapReduce) (string, error) {
 	// open grouped file and send to reducer
-	file, err := os.Open(filepath)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
@@ -748,7 +748,7 @@ func reduceFile(filepath string, dest string, outputName string, job MapReduce) 
 
 	// remove grouped file
 	file.Close()
-	// os.Remove(file.Name())
+	os.Remove(file.Name())
 
 	// return filename of temp output file
 	return tmpfile.Name(), nil
@@ -792,7 +792,7 @@ func sendPairs(filename string) error {
 
 	// remove temp file
 	file.Close()
-	// os.Remove(filename)
+	os.Remove(filename)
 
 	// wait for response
 	wrapper, _ := msgHandler.Receive()
