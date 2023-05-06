@@ -261,7 +261,7 @@ func main() {
 		outputFiles[i] = filename
 	}
 
-	log.Println("\nSuccessfully complete map reduce job, filenames:")
+	log.Println("\nSuccessfully completed map reduce job, filenames:")
 	for _, filename := range outputFiles {
 		log.Println(path.Base(filename))
 	}

@@ -8,15 +8,17 @@ import (
 )
 
 type Context struct {
-	files     []*os.File
-	filenames []string
+	files      []*os.File
+	filenames  []string
+	stringSort bool
 }
 
-func NewContext(dest string, nodeAddrs []string) (*Context, error) {
+func NewContext(dest string, nodeAddrs []string, stringSort bool) (*Context, error) {
 	// create context
 	c := &Context{
-		files:     make([]*os.File, 0),
-		filenames: make([]string, 0),
+		files:      make([]*os.File, 0),
+		filenames:  make([]string, 0),
+		stringSort: stringSort,
 	}
 
 	// for each dest, open a file
@@ -60,6 +62,14 @@ func (c *Context) CloseFiles() {
 	for _, f := range c.files {
 		f.Close()
 	}
+}
+
+func (c *Context) SetIntCompare() {
+	c.stringSort = false
+}
+
+func (c *Context) IsStringCompare() bool {
+	return c.stringSort
 }
 
 func (c *Context) RemoveFiles() {

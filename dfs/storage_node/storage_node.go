@@ -21,6 +21,7 @@ import (
 	"plugin"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -372,7 +373,7 @@ func shufflePairs(dest string, context *util.Context) error {
 	// now we must sort before we send to reducers
 	tmpFilenames := context.GetFilenames()
 	for _, filename := range tmpFilenames {
-		_, err := externalSort(filename, dest)
+		_, err := externalSort(filename, dest, context.IsStringCompare())
 		if err != nil {
 			return err
 		}
@@ -383,12 +384,12 @@ func shufflePairs(dest string, context *util.Context) error {
 	return nil
 }
 
-func externalSort(filename string, dest string) (*os.File, error) {
-	chunkFiles, err := splitFile(filename, dest)
+func externalSort(filename string, dest string, stringSort bool) (*os.File, error) {
+	chunkFiles, err := splitFile(filename, dest, stringSort)
 	if err != nil {
 		return nil, err
 	}
-	sortedFile, err := mergeFiles(filename+"_sorted", chunkFiles, false)
+	sortedFile, err := mergeFiles(filename+"_sorted", chunkFiles, false, stringSort)
 	if err != nil {
 		return nil, err
 	}
@@ -396,9 +397,9 @@ func externalSort(filename string, dest string) (*os.File, error) {
 }
 
 // splits file at around 10MB (test with 20B)
-func splitFile(filename string, dest string) ([]string, error) {
+func splitFile(filename string, dest string, stringSort bool) ([]string, error) {
 	// chunksize := int64(10 * math.Pow(2, 20))
-	chunksize := 20
+	chunksize := 40
 	tmpFilenames := make([]string, 0)
 
 	// open temp node file
@@ -446,7 +447,16 @@ func splitFile(filename string, dest string) ([]string, error) {
 		}
 
 		// sort the lines (by the keys)
-		sort.Strings(lines)
+		if stringSort {
+			sort.Strings(lines)
+		} else {
+			sort.Slice(lines, func(i, j int) bool {
+				num1, _ := strconv.Atoi(lines[i][:1]) // get the number from the first character of the string
+				num2, _ := strconv.Atoi(lines[j][:1])
+				return num1 > num2 // compare the numbers in descending order
+			})
+		}
+		fmt.Println(lines)
 
 		// output sorted keys to temp file
 		tmpfile, err := ioutil.TempFile(dest, "sorted_pairs_*")
@@ -472,7 +482,7 @@ func splitFile(filename string, dest string) ([]string, error) {
 	return tmpFilenames, nil
 }
 
-func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File, error) {
+func mergeFiles(filepath string, chunkfiles []string, groupFlag bool, strSort bool) (*os.File, error) {
 	// open file to write to (check if file already exists)
 	sortedfile, err := os.OpenFile(filepath, os.O_RDWR|os.O_CREATE|os.O_EXCL, 0644)
 	if err != nil {
@@ -492,7 +502,7 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File,
 			return nil, err
 		}
 		defer file.Close()
-		defer os.Remove(filename)
+		// defer os.Remove(filename)
 
 		// add first key of each file to helper slice
 		scanners = append(scanners, bufio.NewScanner(file))
@@ -515,12 +525,12 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File,
 	// all chunk(s) are not empty
 	if done != numChunks {
 		for {
-			// set curr min, make sure it's not "" (sorry)
-			minIndex := 0
-			if helperSlice[minIndex] == "" {
+			// set curr target (min str or max int), make sure it's not "" (sorry)
+			targetIndex := 0
+			if helperSlice[targetIndex] == "" {
 				for j := 0; j < numChunks; j++ {
 					if helperSlice[j] != "" {
-						minIndex = j
+						targetIndex = j
 					}
 				}
 			}
@@ -528,31 +538,39 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File,
 			// find the minimum in slice
 			for j := 0; j < numChunks; j++ {
 				if helperSlice[j] != "" {
-					if helperSlice[j] < helperSlice[minIndex] {
-						minIndex = j
+					if strSort {
+						if helperSlice[j] < helperSlice[targetIndex] {
+							targetIndex = j
+						}
+					} else {
+						num1, _ := strconv.Atoi(helperSlice[j][:1]) // get the number from the first character of the string
+						num2, _ := strconv.Atoi(helperSlice[targetIndex][:1])
+						if num1 > num2 {
+							targetIndex = j
+						}
 					}
 				}
 			}
 
-			line := strings.Split(helperSlice[minIndex], "\t")
+			line := strings.Split(helperSlice[targetIndex], "\t")
 			if groupFlag {
 				if line[0] == prevKey {
 					sortedfile.Write(append([]byte("\t"), []byte(line[1])...))
 				} else if prevKey == "" { // first key
-					sortedfile.Write([]byte(helperSlice[minIndex]))
+					sortedfile.Write([]byte(helperSlice[targetIndex]))
 				} else {
-					sortedfile.Write(append([]byte("\n"), []byte(helperSlice[minIndex])...))
+					sortedfile.Write(append([]byte("\n"), []byte(helperSlice[targetIndex])...))
 				}
 			} else {
 				// write the min key to output file
-				sortedfile.Write(append([]byte(helperSlice[minIndex]), []byte("\n")...))
+				sortedfile.Write(append([]byte(helperSlice[targetIndex]), []byte("\n")...))
 			}
 
 			// incremenet index of minimum element and check if end
-			if scanners[minIndex].Scan() {
-				helperSlice[minIndex] = scanners[minIndex].Text()
+			if scanners[targetIndex].Scan() {
+				helperSlice[targetIndex] = scanners[targetIndex].Text()
 			} else {
-				helperSlice[minIndex] = ""
+				helperSlice[targetIndex] = ""
 				done++
 			}
 
@@ -586,7 +604,7 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 	}
 
 	// create temp file for emitted key value pairs
-	context, err := util.NewContext(dest, jobOrder.ReducerNodes)
+	context, err := util.NewContext(dest, jobOrder.ReducerNodes, true)
 	if err != nil {
 		// send failed message back
 		msgHandler.SendJobStatus(false, err.Error(), "")
@@ -640,7 +658,7 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 		log.Println("Grouping key value pairs")
 		rand.Seed(time.Now().UnixNano())
 		filepath := fmt.Sprintf("%s/shuffled_grouped_pairs_%09d", dest, rand.Int()%1000000000)
-		groupedFile, err := mergeFiles(filepath, tmpFiles, true)
+		groupedFile, err := mergeFiles(filepath, tmpFiles, true, context.IsStringCompare())
 		if err != nil {
 			msgHandler.SendJobStatus(false, fmt.Sprintf("error merging incoming pairs: %s", err.Error()), "")
 			return
@@ -687,7 +705,7 @@ func storeFile(filename string) error {
 	log.Print(strings.TrimSuffix(string(output), "\n"))
 
 	// remove temp output file
-	os.Remove(filename)
+	// os.Remove(filename)
 
 	return nil
 }
@@ -728,7 +746,7 @@ func reduceFile(filepath string, dest string, outputName string, job MapReduce) 
 
 	// remove grouped file
 	file.Close()
-	os.Remove(file.Name())
+	// os.Remove(file.Name())
 
 	// return filename of temp output file
 	return tmpfile.Name(), nil
@@ -772,7 +790,7 @@ func sendPairs(filename string) error {
 
 	// remove temp file
 	file.Close()
-	os.Remove(filename)
+	// os.Remove(filename)
 
 	// wait for response
 	wrapper, _ := msgHandler.Receive()
