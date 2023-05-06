@@ -29,7 +29,7 @@ const DEST = "/bigdata/students/aeradford/mydfs"
 
 type MapReduce interface {
 	Map(line_number int, line_text string, context *util.Context) error
-	Reduce()
+	Reduce(key string, values []string, context *os.File) error
 }
 
 type storageNode struct {
@@ -477,8 +477,8 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File,
 	}
 	defer sortedfile.Close()
 
-	m := len(chunkfiles)
-	helperSlice := make([]string, m)
+	numChunks := len(chunkfiles)
+	helperSlice := make([]string, numChunks)
 	scanners := make([]*bufio.Scanner, 0)
 
 	// open all the temp stored files
@@ -489,71 +489,81 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File,
 			return nil, err
 		}
 		defer file.Close()
-		defer os.Remove(filename)
+		// defer os.Remove(filename)
 
 		// add first key of each file to helper slice
 		scanners = append(scanners, bufio.NewScanner(file))
 		if scanners[i].Scan() {
 			helperSlice[i] = scanners[i].Text()
+		} else {
+			helperSlice[i] = ""
 		}
 	}
 
-	// merge sorted files
-	done := 0
+	// intitial setup: see which files are empty and update done count
 	prevKey := "" // only for grouping
-	for {
-		// set curr min, make sure it's not "" (sorry)
-		minIndex := 0
-		if helperSlice[minIndex] == "" {
-			for j := 0; j < m; j++ {
-				if helperSlice[j] != "" {
-					minIndex = j
-				}
-			}
-		}
-
-		// find the minimum in slice
-		for j := 0; j < m; j++ {
-			if helperSlice[j] != "" {
-				if helperSlice[j] < helperSlice[minIndex] {
-					minIndex = j
-				}
-			}
-		}
-
-		line := strings.Split(helperSlice[minIndex], "\t")
-		if groupFlag {
-			if line[0] == prevKey {
-				sortedfile.Write(append([]byte("\t"), []byte(line[1])...))
-			} else if prevKey == "" { // first key
-				sortedfile.Write([]byte(helperSlice[minIndex]))
-			} else {
-				sortedfile.Write(append([]byte("\n"), []byte(helperSlice[minIndex])...))
-			}
-
-		} else {
-			// write the min key to output file
-			sortedfile.Write(append([]byte(helperSlice[minIndex]), []byte("\n")...))
-		}
-
-		// incremenet index of minimum element and check if end
-		if scanners[minIndex].Scan() {
-			helperSlice[minIndex] = scanners[minIndex].Text()
-		} else {
-			helperSlice[minIndex] = ""
+	done := 0
+	for j := 0; j < numChunks; j++ {
+		if helperSlice[j] == "" {
 			done++
 		}
+	}
 
-		// update previous key
-		prevKey = line[0]
-
-		// check if all files are done
-		if done == m {
-			if groupFlag {
-				// add last newline
-				sortedfile.Write([]byte("\n"))
+	// all chunk(s) are not empty
+	if done != numChunks {
+		for {
+			// set curr min, make sure it's not "" (sorry)
+			minIndex := 0
+			if helperSlice[minIndex] == "" {
+				for j := 0; j < numChunks; j++ {
+					if helperSlice[j] != "" {
+						minIndex = j
+					}
+				}
 			}
-			break
+
+			// find the minimum in slice
+			for j := 0; j < numChunks; j++ {
+				if helperSlice[j] != "" {
+					if helperSlice[j] < helperSlice[minIndex] {
+						minIndex = j
+					}
+				}
+			}
+
+			line := strings.Split(helperSlice[minIndex], "\t")
+			if groupFlag {
+				if line[0] == prevKey {
+					sortedfile.Write(append([]byte("\t"), []byte(line[1])...))
+				} else if prevKey == "" { // first key
+					sortedfile.Write([]byte(helperSlice[minIndex]))
+				} else {
+					sortedfile.Write(append([]byte("\n"), []byte(helperSlice[minIndex])...))
+				}
+			} else {
+				// write the min key to output file
+				sortedfile.Write(append([]byte(helperSlice[minIndex]), []byte("\n")...))
+			}
+
+			// incremenet index of minimum element and check if end
+			if scanners[minIndex].Scan() {
+				helperSlice[minIndex] = scanners[minIndex].Text()
+			} else {
+				helperSlice[minIndex] = ""
+				done++
+			}
+
+			// update previous key
+			prevKey = line[0]
+
+			// check if all files are done
+			if done == numChunks {
+				if groupFlag {
+					// add last newline
+					sortedfile.Write([]byte("\n"))
+				}
+				break
+			}
 		}
 	}
 
@@ -568,7 +578,7 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 	job, err := getPlugin(jobOrder, dest, node)
 	if job == nil {
 		// send failed message back
-		msgHandler.SendJobStatus(false, err.Error())
+		msgHandler.SendJobStatus(false, err.Error(), "")
 		return
 	}
 
@@ -576,7 +586,7 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 	context, err := util.NewContext(dest, jobOrder.ReducerNodes)
 	if err != nil {
 		// send failed message back
-		msgHandler.SendJobStatus(false, err.Error())
+		msgHandler.SendJobStatus(false, err.Error(), "")
 		return
 	}
 
@@ -587,18 +597,18 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 		linesParsed, err = mapFile(filepath, dest, job, context)
 		if err != nil {
 			// send failed message back
-			msgHandler.SendJobStatus(false, err.Error())
+			msgHandler.SendJobStatus(false, err.Error(), "")
 			return
 		}
 	}
 
 	// send map status back to resource manager
-	msgHandler.SendJobStatus(true, fmt.Sprintf("successfully completed map task, %d lines parsed", linesParsed))
+	msgHandler.SendJobStatus(true, fmt.Sprintf("completed map task, %d lines parsed", linesParsed), "")
 
 	// begin shuffle phase: aka sort files
 	err = shufflePairs(dest, context)
 	if err != nil {
-		msgHandler.SendJobStatus(false, err.Error())
+		msgHandler.SendJobStatus(false, err.Error(), "")
 		return
 	}
 
@@ -606,12 +616,12 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 	for _, filename := range context.GetFilenames() {
 		err := sendPairs(filename + "_sorted")
 		if err != nil {
-			msgHandler.SendJobStatus(false, err.Error())
+			msgHandler.SendJobStatus(false, err.Error(), "")
 			return
 		}
 	}
 
-	msgHandler.SendJobStatus(true, "successfully sent sorted pairs to reducers")
+	msgHandler.SendJobStatus(true, "shuffle sorted pairs to reducers", "")
 
 	// if reducer, then wait for shuffled pairs
 	if jobOrder.IsReducer {
@@ -627,25 +637,65 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 		log.Println("Grouping key value pairs")
 		rand.Seed(time.Now().UnixNano())
 		filepath := fmt.Sprintf("%s/shuffled_grouped_pairs_%09d", dest, rand.Int()%1000000000)
-		sortedFile, err := mergeFiles(filepath, tmpFiles, true)
+		groupedFile, err := mergeFiles(filepath, tmpFiles, true)
 		if err != nil {
-			msgHandler.SendJobStatus(false, fmt.Sprintf("error merging incoming pairs: %s", err.Error()))
+			msgHandler.SendJobStatus(false, fmt.Sprintf("error merging incoming pairs: %s", err.Error()), "")
 			return
 		}
-		log.Println(sortedFile) // REMOVE PRINT!!!!!
 
-		msgHandler.SendJobStatus(true, "successfully received and grouped")
+		msgHandler.SendJobStatus(true, "received and grouped shuffled pairs", "")
+
+		// now reduce the file
+		outputName, err := reduceFile(groupedFile.Name(), dest, jobOrder.Filename, job)
+		if err != nil {
+			msgHandler.SendJobStatus(false, fmt.Sprintf("error in reduce phase: %s", err.Error()), "")
+			return
+		}
+		msgHandler.SendJobStatus(true, "successfully reduced file", outputName)
 	}
-
-	// send status saying that shuffle is complete, beg reduce phase
-
-	// do reduction
-
 }
 
-// func reduceFile(filepath string, dest string, job MapReduce, context *util.Context) {
+func reduceFile(filepath string, dest string, outputName string, job MapReduce) (string, error) {
+	// open grouped file and send to reducer
+	file, err := os.Open(filepath)
+	if err != nil {
+		return "", err
+	}
 
-// }
+	// create temp file
+	tmpfile, err := ioutil.TempFile(dest, fmt.Sprintf("%s_output_*", outputName))
+	if err != nil {
+		return "", err
+	}
+
+	// perform reduce job on each line
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		lineText := scanner.Text()
+		tokens := strings.Split(lineText, "\t")
+		values := make([]string, len(tokens)-1)
+		for i := 1; i < len(tokens); i++ {
+			values[i-1] = tokens[i]
+		}
+
+		err := job.Reduce(tokens[0], values, tmpfile)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// throw error if line is too big
+	if scanner.Err() != nil {
+		return "", scanner.Err()
+	}
+
+	// remove grouped file
+	file.Close()
+	// os.Remove(file.Name())
+
+	// return filename of temp output file
+	return tmpfile.Name(), nil
+}
 
 func sendPairs(filename string) error {
 	// open sorted temp file
@@ -685,7 +735,7 @@ func sendPairs(filename string) error {
 
 	// remove temp file
 	file.Close()
-	os.Remove(filename)
+	// os.Remove(filename)
 
 	// wait for response
 	wrapper, _ := msgHandler.Receive()

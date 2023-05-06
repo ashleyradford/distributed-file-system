@@ -321,9 +321,9 @@ func (m *MessageHandler) SendMapRes(ok bool, message string, chunkNodes map[stri
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendJobOrder(jobHash string, job []byte, isReducer bool, chunks []string,
+func (m *MessageHandler) SendJobOrder(filename string, jobHash string, job []byte, isReducer bool, chunks []string,
 	reducerNodes []string, numMappers int) error {
-	msg := JobOrder{JobHash: jobHash, Job: job, IsReducer: isReducer, Chunks: chunks,
+	msg := JobOrder{Filename: filename, JobHash: jobHash, Job: job, IsReducer: isReducer, Chunks: chunks,
 		ReducerNodes: reducerNodes, NumMappers: int64(numMappers)}
 	wrapper := &Wrapper{
 		Msg: &Wrapper_JobOrder{JobOrder: &msg},
@@ -331,8 +331,8 @@ func (m *MessageHandler) SendJobOrder(jobHash string, job []byte, isReducer bool
 	return m.Send(wrapper)
 }
 
-func (m *MessageHandler) SendJobStatus(ok bool, message string) error {
-	msg := JobStatus{Ok: ok, Message: message}
+func (m *MessageHandler) SendJobStatus(ok bool, message string, output string) error {
+	msg := JobStatus{Ok: ok, Message: message, Output: output}
 	wrapper := &Wrapper{
 		Msg: &Wrapper_JobStatus{JobStatus: &msg},
 	}

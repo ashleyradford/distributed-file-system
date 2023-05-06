@@ -2,7 +2,8 @@ package main
 
 import (
 	"dfs/util"
-	"fmt"
+	"os"
+	"strconv"
 	"strings"
 )
 
@@ -22,8 +23,22 @@ func (m mapReduce) Map(line_number int, line_text string, context *util.Context)
 	return nil
 }
 
-func (m mapReduce) Reduce() {
-	fmt.Printf("Reduce >.<")
+func (m mapReduce) Reduce(key string, values []string, context *os.File) error {
+	sum := 0
+	for _, value := range values {
+		v, err := strconv.Atoi(value)
+		if err != nil {
+			return err
+		}
+		sum += v
+	}
+
+	// write key value
+	context.Write(append([]byte(key), []byte("\t")...))
+	// write aggregated value
+	context.Write(append([]byte(strconv.Itoa(sum)), []byte("\n")...))
+
+	return nil
 }
 
 // var MapReduce *jobs.Behavior

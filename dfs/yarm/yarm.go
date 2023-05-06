@@ -88,14 +88,14 @@ func selectReducers(nodeChunkMap map[string][]string, numReducers int) map[strin
 	return nodeSet
 }
 
-func sendJob(nodeAddr string, job_hash string, job []byte, isReducer bool, chunks []string, reducerNodes []string,
-	numMappers int, jobChan chan bool) {
+func sendJob(filename string, nodeAddr string, job_hash string, job []byte, isReducer bool,
+	chunks []string, reducerNodes []string, numMappers int, jobCh chan bool, outputCh chan string) {
 
 	// try to connect to given node
 	conn, err := net.Dial("tcp", nodeAddr)
 	if err != nil {
 		log.Println(err)
-		jobChan <- false
+		jobCh <- false
 		return
 	}
 
@@ -103,16 +103,16 @@ func sendJob(nodeAddr string, job_hash string, job []byte, isReducer bool, chunk
 	msgHandler := messages.NewMessageHandler(conn)
 
 	// send the map order
-	msgHandler.SendJobOrder(job_hash, job, isReducer, chunks, reducerNodes, numMappers)
+	msgHandler.SendJobOrder(filename, job_hash, job, isReducer, chunks, reducerNodes, numMappers)
 
 	// wait for map response
 	wrapper, _ := msgHandler.Receive()
 	msg := wrapper.GetJobStatus()
 	if msg.Ok {
-		jobChan <- true
+		jobCh <- true
 		log.Printf("%s: %s\n", nodeAddr, msg.Message)
 	} else {
-		jobChan <- false
+		jobCh <- false
 		log.Printf("%s: %s\n", nodeAddr, msg.Message)
 	}
 
@@ -120,10 +120,10 @@ func sendJob(nodeAddr string, job_hash string, job []byte, isReducer bool, chunk
 	wrapper, _ = msgHandler.Receive()
 	msg = wrapper.GetJobStatus()
 	if msg.Ok {
-		jobChan <- true
+		jobCh <- true
 		log.Printf("%s: %s\n", nodeAddr, msg.Message)
 	} else {
-		jobChan <- false
+		jobCh <- false
 		log.Printf("%s: %s\n", nodeAddr, msg.Message)
 	}
 
@@ -132,11 +132,22 @@ func sendJob(nodeAddr string, job_hash string, job []byte, isReducer bool, chunk
 		wrapper, _ = msgHandler.Receive()
 		msg := wrapper.GetJobStatus()
 		if msg.Ok {
-			jobChan <- true
+			jobCh <- true
 			log.Printf("%s: %s\n", nodeAddr, msg.Message)
 		} else {
-			jobChan <- false
+			jobCh <- false
 			log.Printf("%s: %s\n", nodeAddr, msg.Message)
+		}
+
+		// now wait for the complete response
+		wrapper, _ = msgHandler.Receive()
+		msg = wrapper.GetJobStatus()
+		if msg.Ok {
+			log.Printf("%s: %s\n", nodeAddr, msg.Message)
+			outputCh <- msg.Output
+		} else {
+			log.Printf("%s: %s\n", nodeAddr, msg.Message)
+			outputCh <- ""
 		}
 	}
 
@@ -213,37 +224,45 @@ func main() {
 	}
 
 	// send the job to the mapper nodes
-	log.Println("Starting map phase.")
-	jobChan := make(chan bool, len(nodeChunkMap))
+	log.Println("Starting map reduce.")
+	jobCh := make(chan bool, len(nodeChunkMap))
+	outputCh := make(chan string, len(reducerNodeSet))
 	for nodeAddr, chunks := range nodeChunkMap {
 		isReducer := false
 		if _, ok := reducerNodeSet[nodeAddr]; ok {
 			isReducer = true
 		}
-		go sendJob(nodeAddr, string(fmt.Sprintf("%x", md5Hash.Sum(nil))), soBytes.Bytes(),
-			isReducer, chunks, reducerNodeList, len(nodeChunkMap), jobChan)
+		go sendJob(filename, nodeAddr, string(fmt.Sprintf("%x", md5Hash.Sum(nil))), soBytes.Bytes(),
+			isReducer, chunks, reducerNodeList, len(nodeChunkMap), jobCh, outputCh)
 	}
 
 	// check that all job tasks are complete
 	var failed bool
-	for i := 0; i < len(nodeChunkMap)*2+len(reducerNodeSet)*2; i++ {
-		success := <-jobChan
+	for i := 0; i < len(nodeChunkMap)*2+numReducers; i++ {
+		success := <-jobCh
 		if !success {
 			failed = true
 			break
-		}
-		// if success && i == len(nodeChunkMap)*2-1 {
-		// 	log.Println("\nAll data has been sent to reducers.")
-		// }
-		if success && i == len(nodeChunkMap)*2+len(reducerNodeList)-1 {
-			log.Println("\nStarting reduce phase.")
 		}
 	}
 
 	if failed {
 		log.Println("Failed to complete map reduce job, aborting job.")
 		return
-	} else {
-		log.Println("Map reduce job successfully completed, starting shuffle phase.")
+	}
+
+	outputFiles := make([]string, numReducers)
+	for i := 0; i < numReducers; i++ {
+		filename := <-outputCh
+		if filename == "" {
+			log.Println("Failed to complete map reduce job, aborting job.")
+			return
+		}
+		outputFiles[i] = filename
+	}
+
+	log.Println("\nSuccessfully complete map reduce job, filenames:")
+	for _, filename := range outputFiles {
+		log.Println(path.Base(filename))
 	}
 }
