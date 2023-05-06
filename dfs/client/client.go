@@ -555,7 +555,7 @@ func main() {
 			val, _ := strconv.ParseFloat(os.Args[4], 64)
 			chunksize = int64(val * math.Pow(2, 20)) // convert from MB to bytes
 		} else {
-			chunksize = int64(10 * math.Pow(2, 20)) // 10MB default chunk size
+			chunksize = util.DEFAULT_CHUNKSIZE // 10MB default chunk size
 		}
 		storeFile(msgHandler, filepath, chunksize)
 	case "get":

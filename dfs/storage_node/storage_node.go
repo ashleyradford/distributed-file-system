@@ -11,7 +11,6 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
-	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -559,7 +558,7 @@ func externalSort(filename string, dest string, stringSort bool) (*os.File, erro
 // splits file at around 10MB (test with 40B)
 func splitFile(filename string, dest string, stringSort bool) ([]string, error) {
 	// chunksize := 40
-	chunksize := int64(10 * math.Pow(2, 20))
+	chunksize := util.DEFAULT_SPLITSIZE
 	tmpFilenames := make([]string, 0)
 
 	// open temp node file
