@@ -3,6 +3,7 @@ package main
 import (
 	"dfs/util"
 	"os"
+	"strconv"
 	"strings"
 )
 
@@ -13,9 +14,15 @@ func (m mapReduce) Map(line_number int, line_text string, context *util.Context)
 	if len(tokens) > 0 {
 		word := tokens[0]
 		count := tokens[1]
-		err := context.Write(count, word)
+		value, err := strconv.Atoi(count)
 		if err != nil {
 			return err
+		}
+		if value > 5 {
+			err := context.Write(count, word)
+			if err != nil {
+				return err
+			}
 		}
 	}
 	context.SetIntCompare()
@@ -32,5 +39,4 @@ func (m mapReduce) Reduce(key string, values []string, context *os.File) error {
 	return nil
 }
 
-// var MapReduce *jobs.Behavior
 var MapReduce mapReduce

@@ -11,6 +11,7 @@ import (
 	"io"
 	"io/ioutil"
 	"log"
+	"math"
 	"math/rand"
 	"net"
 	"os"
@@ -396,10 +397,10 @@ func externalSort(filename string, dest string, stringSort bool) (*os.File, erro
 	return sortedFile, nil
 }
 
-// splits file at around 10MB (test with 20B)
+// splits file at around 10MB (test with 40B)
 func splitFile(filename string, dest string, stringSort bool) ([]string, error) {
-	// chunksize := int64(10 * math.Pow(2, 20))
-	chunksize := 40
+	// chunksize := 40
+	chunksize := int64(10 * math.Pow(2, 20))
 	tmpFilenames := make([]string, 0)
 
 	// open temp node file
@@ -451,12 +452,11 @@ func splitFile(filename string, dest string, stringSort bool) ([]string, error) 
 			sort.Strings(lines)
 		} else {
 			sort.Slice(lines, func(i, j int) bool {
-				num1, _ := strconv.Atoi(lines[i][:1]) // get the number from the first character of the string
-				num2, _ := strconv.Atoi(lines[j][:1])
+				num1, _ := strconv.Atoi(strings.Split(lines[i], "\t")[0]) // get the number from before the tab
+				num2, _ := strconv.Atoi(strings.Split(lines[j], "\t")[0])
 				return num1 > num2 // compare the numbers in descending order
 			})
 		}
-		fmt.Println(lines)
 
 		// output sorted keys to temp file
 		tmpfile, err := ioutil.TempFile(dest, "sorted_pairs_*")
@@ -543,8 +543,8 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool, strSort bo
 							targetIndex = j
 						}
 					} else {
-						num1, _ := strconv.Atoi(helperSlice[j][:1]) // get the number from the first character of the string
-						num2, _ := strconv.Atoi(helperSlice[targetIndex][:1])
+						num1, _ := strconv.Atoi(strings.Split(helperSlice[j], "\t")[0]) // get the number from before the tab
+						num2, _ := strconv.Atoi(strings.Split(helperSlice[targetIndex], "\t")[0])
 						if num1 > num2 {
 							targetIndex = j
 						}
@@ -724,7 +724,9 @@ func reduceFile(filepath string, dest string, outputName string, job MapReduce) 
 	}
 
 	// perform reduce job on each line
+	buf := 512 * 1024
 	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, buf), buf)
 	for scanner.Scan() {
 		lineText := scanner.Text()
 		tokens := strings.Split(lineText, "\t")

@@ -567,7 +567,7 @@ func main() {
 		// check if target directory exists
 		dest := DEST
 		if len(os.Args) == 5 {
-			dest = os.Args[5]
+			dest = os.Args[4]
 		}
 		retrieveFile(msgHandler, filepath, dest) // should be a filename
 	case "delete":
