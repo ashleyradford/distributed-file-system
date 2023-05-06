@@ -9,7 +9,7 @@ func VerifyChecksum(checksum1 []byte, checksum2 []byte) bool {
 	return bytes.Equal(checksum1, checksum2)
 }
 
-// in Bytes
+// in bytes
 func GetDiskSpace() (uint64, error) {
 	fs := syscall.Statfs_t{}
 	err := syscall.Statfs(".", &fs)

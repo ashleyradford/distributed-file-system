@@ -8,16 +8,20 @@ Controller messages:
     ListRes
     NodeRes
     DeleteRes
+    MapRes
 
 Node Messages:
     JoinReq
     Heartbeat
     StorageRes
     RetrievalRes
-    OrderRes
-    ReplicaReq
     StorageReq
     RetrievalReq
+    OrderRes
+    ReplicaReq
+    JobStatus
+    KeyValueNotice
+    KeyValueRes
     Checksum
     ChecksumRes
 
@@ -28,6 +32,10 @@ Client Messages:
     NodeReq
     DeleteReq
     Checksum
+
+Yarm Messages:
+    MapReq
+    JobOrder
 
 Current Features:
 - Storage nodes can join controller
@@ -44,7 +52,7 @@ ilovecats.txt :	chunk01 : {node03, node02, node01}
                           chunk02 : {node02, node03, node04}
                           chunk03 : {node01, node03, node04}
 
-CASES THAT INVOLVE FAULT TOLERANCE
+FAULT TOLERANCE CASES
 1) node01 declared as dead...need to find all the chunks that are stored in node01 and delete
 2) checking replication level...need to check
       a) number of nodes < replication level, if so
@@ -59,6 +67,7 @@ Limitations and Issues:
 - Not verifiying a checksum of the sent so file
 - No error handling when requesting job for not fully stored file
 - Sending pair files over channel is bad bc then it reaaally limits us to one job at a time
+- Can only run one job at a time
 
 Comments:
 - Making it content aware with current implementation because i relied on the
@@ -69,14 +78,14 @@ Test commands:
 ~/go/bin/client orion05:24000 put ilovecats.txt 0.00004
 ~/go/bin/yarm orion05:24000 word_count/word_count.so ilovecats.txt
 go build -buildmode=plugin word_count.go
+go build -buildmode=plugin log_analyzer.go
+go build -buildmode=plugin sort.go
 
-Questions:
-- Is letting manager know when all map jobs are complete on a single node?
-  Or should we be doing it affter each line?
-- Are we supposed to be sorting during the shuffle phase?
-- I am waiting until map phase is done...is this bad?
+Iffy:
+- Storing file back into database could be better
 - Wait, we don't need to close the conns right?
-- Can only run one job at a time...
+- In sort job, filter out the low number lines bc otherwise
+  error in reduce phase: bufio.Scanner: token too long
 
 Create other temp files and append to those
 So we get the four file from the context stuff

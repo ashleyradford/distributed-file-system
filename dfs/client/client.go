@@ -306,7 +306,7 @@ func getChunkFromNode(msgHandler *messages.MessageHandler, filename string, chun
 	}
 }
 
-/* ------ Client Actions ------ */
+/* ------------ Client Actions ------------ */
 func storeFile(msgHandler *messages.MessageHandler, filepath string, chunksize int64) {
 	// get file size and check if it exists
 	info, err := os.Stat(filepath)

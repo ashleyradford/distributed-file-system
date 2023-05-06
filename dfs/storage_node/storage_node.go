@@ -68,7 +68,7 @@ func updateNodeInfo(node *storageNode, success bool, filename string, chunkname 
 	m.Unlock()
 }
 
-/* ------ Receive Messages ------ */
+/* ------------------ Receive Messages ------------------ */
 func receiveStorageRequest(msgHandler *messages.MessageHandler, storeReq *messages.NStorageReq,
 	node *storageNode, dest string) {
 
@@ -290,6 +290,124 @@ func receiveRetrievalRequest(msgHandler *messages.MessageHandler, retrieveReq *m
 	}
 }
 
+func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.JobOrder,
+	node *storageNode, dest string, shuffleCh chan string) {
+
+	log.Println("Received map reduce job")
+
+	job, err := getPlugin(jobOrder, dest, node)
+	if job == nil {
+		// send failed message back
+		msgHandler.SendJobStatus(false, err.Error(), "")
+		return
+	}
+
+	// create temp file for emitted key value pairs
+	context, err := util.NewContext(dest, jobOrder.ReducerNodes, true)
+	if err != nil {
+		// send failed message back
+		msgHandler.SendJobStatus(false, err.Error(), "")
+		return
+	}
+
+	// perform map task on each chunk
+	linesParsed := 0
+	for _, chunkFile := range jobOrder.Chunks {
+		path := dest + "/" + chunkFile
+		count, err := mapFile(path, dest, job, context)
+		linesParsed += count
+		if err != nil {
+			// send failed message back
+			msgHandler.SendJobStatus(false, err.Error(), "")
+			return
+		}
+	}
+	// done writing to node files, close temp files
+	context.CloseFiles()
+
+	// send map status back to resource manager
+	msgHandler.SendJobStatus(true, fmt.Sprintf("completed map task, %d lines parsed", linesParsed), "")
+
+	// begin shuffle phase: aka sort files
+	err = shufflePairs(dest, context)
+	if err != nil {
+		msgHandler.SendJobStatus(false, err.Error(), "")
+		return
+	}
+
+	// send shuffled pairs to reducers
+	for _, filename := range context.GetFilenames() {
+		err := sendPairs(filename + "_sorted")
+		if err != nil {
+			msgHandler.SendJobStatus(false, err.Error(), "")
+			return
+		}
+	}
+
+	msgHandler.SendJobStatus(true, "shuffle sorted pairs to reducers", "")
+
+	// if reducer, then wait for shuffled pairs
+	if jobOrder.IsReducer {
+		// listen for other mapper connections
+		log.Println("I'm a reducer!")
+		tmpFiles := make([]string, jobOrder.NumMappers)
+		for i := 0; i < int(jobOrder.NumMappers); i++ {
+			tmpFiles[i] = <-shuffleCh
+			log.Printf("Received: %s", tmpFiles[i])
+		}
+
+		// now merge sort and group at the same time
+		log.Println("Grouping key value pairs")
+		rand.Seed(time.Now().UnixNano())
+		path := fmt.Sprintf("%s/shuffled_grouped_pairs_%09d", dest, rand.Int()%1000000000)
+		groupedFile, err := mergeFiles(path, tmpFiles, true, context.IsStringCompare())
+		if err != nil {
+			msgHandler.SendJobStatus(false, fmt.Sprintf("error merging incoming pairs: %s", err.Error()), "")
+			return
+		}
+
+		msgHandler.SendJobStatus(true, "received and grouped shuffled pairs", "")
+
+		// now reduce the file
+		output := jobOrder.Filename
+		extension := filepath.Ext(output)
+		name := output[0 : len(output)-len(extension)]
+		outputName, err := reduceFile(groupedFile.Name(), dest, name, job)
+		if err != nil {
+			msgHandler.SendJobStatus(false, fmt.Sprintf("error in reduce phase: %s", err.Error()), "")
+			return
+		}
+
+		// store file into dfs now
+		err = storeFile(outputName)
+		if err != nil {
+			msgHandler.SendJobStatus(false, fmt.Sprintf("error storing reduced file: %s", err.Error()), outputName)
+		}
+
+		// send success message back to manager
+		msgHandler.SendJobStatus(true, "successfully reduced and stored file", outputName)
+	}
+}
+
+func receiveKeyValueNotice(msgHandler *messages.MessageHandler, keyValueNotice *messages.KeyValueNotice,
+	dest string, shuffleCh chan string) {
+
+	// open temp file for incoming key value pairs
+	tmpfile, err := ioutil.TempFile(dest, "shuffled_pairs_*")
+	if err != nil {
+		msgHandler.SendKeyValueRes(false, err.Error())
+	}
+
+	log.Printf("Received key value pairs notice of size: %d\n", keyValueNotice.GetSize())
+
+	io.CopyN(tmpfile, msgHandler, keyValueNotice.Size)
+	msgHandler.SendKeyValueRes(true, "")
+	tmpfile.Close()
+
+	shuffleCh <- tmpfile.Name()
+}
+
+/* ------------------ Map Reduce Methods ------------------ */
 func getPlugin(mapOrder *messages.JobOrder, dest string, node *storageNode) (MapReduce, error) {
 	// check if so file has been hashed
 	var jobPlugin *plugin.Plugin
@@ -365,6 +483,50 @@ func mapFile(path string, dest string, job MapReduce, context *util.Context) (li
 	}
 
 	return lineNum, nil
+}
+
+func reduceFile(path string, dest string, outputName string, job MapReduce) (string, error) {
+	// open grouped file and send to reducer
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+
+	// create temp file
+	tmpfile, err := ioutil.TempFile(dest, fmt.Sprintf("%s_output_*.txt", outputName))
+	if err != nil {
+		return "", err
+	}
+
+	// perform reduce job on each line
+	buf := 512 * 1024
+	scanner := bufio.NewScanner(file)
+	scanner.Buffer(make([]byte, buf), buf)
+	for scanner.Scan() {
+		lineText := scanner.Text()
+		tokens := strings.Split(lineText, "\t")
+		values := make([]string, len(tokens)-1)
+		for i := 1; i < len(tokens); i++ {
+			values[i-1] = tokens[i]
+		}
+
+		err := job.Reduce(tokens[0], values, tmpfile)
+		if err != nil {
+			return "", err
+		}
+	}
+
+	// throw error if line is too big
+	if scanner.Err() != nil {
+		return "", scanner.Err()
+	}
+
+	// remove grouped file
+	file.Close()
+	os.Remove(file.Name())
+
+	// return filename of temp output file
+	return tmpfile.Name(), nil
 }
 
 func shufflePairs(dest string, context *util.Context) error {
@@ -588,105 +750,6 @@ func mergeFiles(path string, chunkfiles []string, groupFlag bool, strSort bool) 
 	return sortedfile, nil
 }
 
-func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.JobOrder,
-	node *storageNode, dest string, shuffleCh chan string) {
-
-	log.Println("Received map reduce job")
-
-	job, err := getPlugin(jobOrder, dest, node)
-	if job == nil {
-		// send failed message back
-		msgHandler.SendJobStatus(false, err.Error(), "")
-		return
-	}
-
-	// create temp file for emitted key value pairs
-	context, err := util.NewContext(dest, jobOrder.ReducerNodes, true)
-	if err != nil {
-		// send failed message back
-		msgHandler.SendJobStatus(false, err.Error(), "")
-		return
-	}
-
-	// perform map task on each chunk
-	linesParsed := 0
-	for _, chunkFile := range jobOrder.Chunks {
-		path := dest + "/" + chunkFile
-		count, err := mapFile(path, dest, job, context)
-		linesParsed += count
-		if err != nil {
-			// send failed message back
-			msgHandler.SendJobStatus(false, err.Error(), "")
-			return
-		}
-	}
-	// done writing to node files, close temp files
-	context.CloseFiles()
-
-	// send map status back to resource manager
-	msgHandler.SendJobStatus(true, fmt.Sprintf("completed map task, %d lines parsed", linesParsed), "")
-
-	// begin shuffle phase: aka sort files
-	err = shufflePairs(dest, context)
-	if err != nil {
-		msgHandler.SendJobStatus(false, err.Error(), "")
-		return
-	}
-
-	// send shuffled pairs to reducers
-	for _, filename := range context.GetFilenames() {
-		err := sendPairs(filename + "_sorted")
-		if err != nil {
-			msgHandler.SendJobStatus(false, err.Error(), "")
-			return
-		}
-	}
-
-	msgHandler.SendJobStatus(true, "shuffle sorted pairs to reducers", "")
-
-	// if reducer, then wait for shuffled pairs
-	if jobOrder.IsReducer {
-		// listen for other mapper connections
-		log.Println("I'm a reducer!")
-		tmpFiles := make([]string, jobOrder.NumMappers)
-		for i := 0; i < int(jobOrder.NumMappers); i++ {
-			tmpFiles[i] = <-shuffleCh
-			log.Printf("Received: %s", tmpFiles[i])
-		}
-
-		// now merge sort and group at the same time
-		log.Println("Grouping key value pairs")
-		rand.Seed(time.Now().UnixNano())
-		path := fmt.Sprintf("%s/shuffled_grouped_pairs_%09d", dest, rand.Int()%1000000000)
-		groupedFile, err := mergeFiles(path, tmpFiles, true, context.IsStringCompare())
-		if err != nil {
-			msgHandler.SendJobStatus(false, fmt.Sprintf("error merging incoming pairs: %s", err.Error()), "")
-			return
-		}
-
-		msgHandler.SendJobStatus(true, "received and grouped shuffled pairs", "")
-
-		// now reduce the file
-		output := jobOrder.Filename
-		extension := filepath.Ext(output)
-		name := output[0 : len(output)-len(extension)]
-		outputName, err := reduceFile(groupedFile.Name(), dest, name, job)
-		if err != nil {
-			msgHandler.SendJobStatus(false, fmt.Sprintf("error in reduce phase: %s", err.Error()), "")
-			return
-		}
-
-		// store file into dfs now
-		err = storeFile(outputName)
-		if err != nil {
-			msgHandler.SendJobStatus(false, fmt.Sprintf("error storing reduced file: %s", err.Error()), outputName)
-		}
-
-		// send success message back to manager
-		msgHandler.SendJobStatus(true, "successfully reduced and stored file", outputName)
-	}
-}
-
 // store files in DFS: should change this tbh
 func storeFile(filename string) error {
 	// get the current user's home directory
@@ -710,118 +773,7 @@ func storeFile(filename string) error {
 	return nil
 }
 
-func reduceFile(path string, dest string, outputName string, job MapReduce) (string, error) {
-	// open grouped file and send to reducer
-	file, err := os.Open(path)
-	if err != nil {
-		return "", err
-	}
-
-	// create temp file
-	tmpfile, err := ioutil.TempFile(dest, fmt.Sprintf("%s_output_*.txt", outputName))
-	if err != nil {
-		return "", err
-	}
-
-	// perform reduce job on each line
-	buf := 512 * 1024
-	scanner := bufio.NewScanner(file)
-	scanner.Buffer(make([]byte, buf), buf)
-	for scanner.Scan() {
-		lineText := scanner.Text()
-		tokens := strings.Split(lineText, "\t")
-		values := make([]string, len(tokens)-1)
-		for i := 1; i < len(tokens); i++ {
-			values[i-1] = tokens[i]
-		}
-
-		err := job.Reduce(tokens[0], values, tmpfile)
-		if err != nil {
-			return "", err
-		}
-	}
-
-	// throw error if line is too big
-	if scanner.Err() != nil {
-		return "", scanner.Err()
-	}
-
-	// remove grouped file
-	file.Close()
-	os.Remove(file.Name())
-
-	// return filename of temp output file
-	return tmpfile.Name(), nil
-}
-
-func sendPairs(filename string) error {
-	// open sorted temp file
-	file, err := os.Open(filename)
-	if err != nil {
-		return err
-	}
-
-	// get file size
-	info, err := os.Stat(filename)
-	if err != nil {
-		return err
-	}
-	filesize := info.Size()
-
-	// get reducer address from filename
-	basename := path.Base(filename)
-	re := regexp.MustCompile(`^([^_]+).*`)
-	match := re.FindStringSubmatch(basename)
-	if match == nil {
-		return errors.New("cannot extract reducer address")
-	}
-
-	// open connection with reducer nodes
-	conn, err := net.Dial("tcp", match[1])
-	if err != nil {
-		return err
-	}
-	log.Printf("Successfully connected to reducer %s\n", match[1])
-	msgHandler := messages.NewMessageHandler(conn)
-
-	// send key value pairs notice
-	msgHandler.SendKeyValueNotice(basename, filesize)
-
-	// send data
-	io.CopyN(msgHandler, file, filesize)
-
-	// remove temp file
-	file.Close()
-	os.Remove(filename)
-
-	// wait for response
-	wrapper, _ := msgHandler.Receive()
-	response := wrapper.GetKeyValueRes()
-	if !response.Ok {
-		return errors.New(response.Message)
-	}
-	return nil
-}
-
-func receiveKeyValueNotice(msgHandler *messages.MessageHandler, keyValueNotice *messages.KeyValueNotice,
-	dest string, shuffleCh chan string) {
-
-	// open temp file for incoming key value pairs
-	tmpfile, err := ioutil.TempFile(dest, "shuffled_pairs_*")
-	if err != nil {
-		msgHandler.SendKeyValueRes(false, err.Error())
-	}
-
-	log.Printf("Received key value pairs notice of size: %d\n", keyValueNotice.GetSize())
-
-	io.CopyN(tmpfile, msgHandler, keyValueNotice.Size)
-	msgHandler.SendKeyValueRes(true, "")
-	tmpfile.Close()
-
-	shuffleCh <- tmpfile.Name()
-}
-
-/* ------ Send Messages ------ */
+/* ------------------ Send Messages ------------------ */
 func sendHeartbeat(node *storageNode) error {
 	// try to connect to controller
 	conn, err := net.Dial("tcp", node.ctrlrAddr)
@@ -995,7 +947,56 @@ func sendReplicaRequest(ctrlrAddr string, nodeId string, filename string,
 	return int(retrievalResponse.ChunkSize)
 }
 
-/* ------ Storage Node Threads ------ */
+func sendPairs(filename string) error {
+	// open sorted temp file
+	file, err := os.Open(filename)
+	if err != nil {
+		return err
+	}
+
+	// get file size
+	info, err := os.Stat(filename)
+	if err != nil {
+		return err
+	}
+	filesize := info.Size()
+
+	// get reducer address from filename
+	basename := path.Base(filename)
+	re := regexp.MustCompile(`^([^_]+).*`)
+	match := re.FindStringSubmatch(basename)
+	if match == nil {
+		return errors.New("cannot extract reducer address")
+	}
+
+	// open connection with reducer nodes
+	conn, err := net.Dial("tcp", match[1])
+	if err != nil {
+		return err
+	}
+	log.Printf("Successfully connected to reducer %s\n", match[1])
+	msgHandler := messages.NewMessageHandler(conn)
+
+	// send key value pairs notice
+	msgHandler.SendKeyValueNotice(basename, filesize)
+
+	// send data
+	io.CopyN(msgHandler, file, filesize)
+
+	// remove temp file
+	file.Close()
+	os.Remove(filename)
+
+	// wait for response
+	wrapper, _ := msgHandler.Receive()
+	response := wrapper.GetKeyValueRes()
+	if !response.Ok {
+		return errors.New(response.Message)
+	}
+	return nil
+}
+
+/* ------------------ Storage Node Threads ------------------ */
 func handleMessages(conn net.Conn, msgHandler *messages.MessageHandler, ctrlrAddr string,
 	node *storageNode, dest string, shuffleCh chan string) {
 

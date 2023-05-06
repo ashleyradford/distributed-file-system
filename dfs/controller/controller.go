@@ -44,7 +44,7 @@ func removeNodeMappings(nodeId string, controller *controllerData) {
 	}
 }
 
-/* ------- Receive Messages ------- */
+/* ------------ Receive Messages ------------ */
 func receiveJoinRequest(msgHandler *messages.MessageHandler, joinReq *messages.JoinReq,
 	controller *controllerData) string {
 
@@ -398,7 +398,7 @@ func orderReplica(nodeAddr string, filename string, chunkname string, chunksize 
 	conn.Close()
 }
 
-/* ------ Controller Threads ------ */
+/* ------------ Controller Threads ------------ */
 func checkHeartBeat(controller *controllerData, threshold float64) {
 	for {
 		time.Sleep(util.HB_CHECK * time.Second)
