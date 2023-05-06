@@ -265,4 +265,5 @@ func main() {
 	for _, filename := range outputFiles {
 		log.Println(path.Base(filename))
 	}
+	log.Println()
 }

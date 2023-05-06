@@ -14,7 +14,10 @@ import (
 	"math/rand"
 	"net"
 	"os"
+	"os/exec"
+	"os/user"
 	"path"
+	helper "path/filepath"
 	"plugin"
 	"regexp"
 	"sort"
@@ -489,7 +492,7 @@ func mergeFiles(filepath string, chunkfiles []string, groupFlag bool) (*os.File,
 			return nil, err
 		}
 		defer file.Close()
-		// defer os.Remove(filename)
+		defer os.Remove(filename)
 
 		// add first key of each file to helper slice
 		scanners = append(scanners, bufio.NewScanner(file))
@@ -646,13 +649,47 @@ func receiveJobOrder(msgHandler *messages.MessageHandler, jobOrder *messages.Job
 		msgHandler.SendJobStatus(true, "received and grouped shuffled pairs", "")
 
 		// now reduce the file
-		outputName, err := reduceFile(groupedFile.Name(), dest, jobOrder.Filename, job)
+		output := jobOrder.Filename
+		extension := helper.Ext(output)
+		name := output[0 : len(output)-len(extension)]
+		outputName, err := reduceFile(groupedFile.Name(), dest, name, job)
 		if err != nil {
 			msgHandler.SendJobStatus(false, fmt.Sprintf("error in reduce phase: %s", err.Error()), "")
 			return
 		}
-		msgHandler.SendJobStatus(true, "successfully reduced file", outputName)
+
+		// store file into dfs now
+		err = storeFile(outputName)
+		if err != nil {
+			msgHandler.SendJobStatus(false, fmt.Sprintf("error storing reduced file: %s", err.Error()), outputName)
+		}
+
+		// send success message back to manager
+		msgHandler.SendJobStatus(true, "successfully reduced and stored file", outputName)
 	}
+}
+
+// store files in DFS: should change this tbh
+func storeFile(filename string) error {
+	// get the current user's home directory
+	usr, err := user.Current()
+	if err != nil {
+		return err
+	}
+
+	execPath := helper.Join(usr.HomeDir, "go", "bin", "client")
+	cmd := exec.Command(execPath, os.Args[1], "put", filename)
+	output, err := cmd.Output()
+	if err != nil {
+		log.Print(strings.TrimSuffix(string(output), "\n"))
+		return err
+	}
+	log.Print(strings.TrimSuffix(string(output), "\n"))
+
+	// remove temp output file
+	os.Remove(filename)
+
+	return nil
 }
 
 func reduceFile(filepath string, dest string, outputName string, job MapReduce) (string, error) {
@@ -663,7 +700,7 @@ func reduceFile(filepath string, dest string, outputName string, job MapReduce) 
 	}
 
 	// create temp file
-	tmpfile, err := ioutil.TempFile(dest, fmt.Sprintf("%s_output_*", outputName))
+	tmpfile, err := ioutil.TempFile(dest, fmt.Sprintf("%s_output_*.txt", outputName))
 	if err != nil {
 		return "", err
 	}
@@ -691,7 +728,7 @@ func reduceFile(filepath string, dest string, outputName string, job MapReduce) 
 
 	// remove grouped file
 	file.Close()
-	// os.Remove(file.Name())
+	os.Remove(file.Name())
 
 	// return filename of temp output file
 	return tmpfile.Name(), nil
@@ -735,7 +772,7 @@ func sendPairs(filename string) error {
 
 	// remove temp file
 	file.Close()
-	// os.Remove(filename)
+	os.Remove(filename)
 
 	// wait for response
 	wrapper, _ := msgHandler.Receive()

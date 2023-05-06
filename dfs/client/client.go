@@ -141,7 +141,6 @@ func makeAwareChunkMap(filepath string, filename string, filesize int64,
 		offset += chunksize
 	}
 
-	fmt.Println(chunkMap)
 	log.Printf("Number of chunks: %d", numChunks)
 	return chunkMap
 }
