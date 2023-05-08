@@ -555,7 +555,7 @@ func externalSort(filename string, dest string, stringSort bool) (*os.File, erro
 	return sortedFile, nil
 }
 
-// splits file at around 10MB (test with 40B)
+// splits file at util.DEFAULT_SPLITSIZE MB (test with 40B)
 func splitFile(filename string, dest string, stringSort bool) ([]string, error) {
 	// chunksize := 40
 	chunksize := util.DEFAULT_SPLITSIZE
