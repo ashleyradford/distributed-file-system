@@ -76,7 +76,8 @@ Comments:
 
 Test commands:
 ~/go/bin/client orion05:24000 put ilovecats.txt 0.00004
-~/go/bin/yarm orion05:24000 word_count/word_count.so ilovecats.txt
+~/go/bin/yarm orion05:24000 dfs/word_count/word_count.so ilovecats.txt
+
 ~/go/bin/client orion05:24000 put /bigdata/mmalensek/logs/url-dataset-10m.txt
 ~/go/bin/yarm orion05:24000 dfs/log_analyzer/log_analyzer.so url-dataset-10m.txt 1
 ~/go/bin/yarm orion05:24000 dfs/sort/sort.so [filename] 1
