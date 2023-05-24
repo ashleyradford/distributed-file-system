@@ -1,0 +1,46 @@
+1. How many extra days did you use for the project?
+
+Probably an extra week or two.
+
+2. Given the same goals, how would you complete the project differently if you didn’t have any
+restrictions imposed by the instructor? This could involve using a particular library, programming
+language, etc. Be sure to provide sufficient detail to justify your response.
+
+I don't think there were many restrictions in place where I would want to complete the project
+differently. Go is very useful for its easy to use goroutines and channels for communications.
+In particular, I would not know how to complete this project without the use of channels as they
+made it easy to wait on routines to finish their work.
+
+3. Let’s imagine that your next project was to improve and extend P2. What are the features/functionality 
+you would add, use cases you would support, etc? Are there any weaknesses in your current implementation 
+that you would like to improve upon? This should include at least three areas you would improve/extend.
+
+I would redo how I did the resource manager. Right now it acts like a secondary client. Instead, I 
+would like it to act more like the controller in the sense that it receives heartbeats and checks on
+the statuses of the computation nodes. This way I can rework it a bit so that it can also run more than
+1 job, as that is its current biggest limitation. Next I would like for the reporting progress to
+maybe show some time of percentage of the work that is currently completed at each stage, similar to
+how Hadoop does it.
+
+The third area of improvement would be to store the reduced files in a better way. Currently, the computation
+node that completes the reduction will simply call on exec.Command() to execute the client to store the temp
+file. I would like to update this by taking the commands that the client uses and separating them out to
+a different file that both the client and the storage node could call upon to communicate with the controller
+to store the file.
+
+4. Give a rough estimate of how long you spent completing this assignment. Additionally, what part of 
+the assignment took the most time?
+
+I would say that the work was spread out across 2 to 3 weeks. The part that took the most time was
+definitely the shuffle stage. Since everything was done externally it added a layer of complexity. An
+honorable mention goes to the time spent making the system content aware so that text files could be
+split per line. This was especially difficult because originally I had the client first calculate, based
+on chunksize, how many chunks would need to be stored and name each chunk based on the offset. After this 
+was done, then the client would ask the controller where to store these chunks. But since each chunk was
+no longer splitting at a predetermined byte, I had to completely restructure these first few stages, while
+also still including the byte offset in each chunkname.
+
+5. What did you learn from completing this project? Is there anything you would change about the project?
+I learned that it can be really hard adding features to an original design. As mentioned above, the way
+my original design split and named the chunks really made the content aware task more difficult than
+it needed to be.

@@ -67,21 +67,6 @@ message MapRes {
     map<string, NodeList> chunk_nodes = 3;
 }
 
-/* ------------- RM messages ------------- */
-message MapReq {
-    string filename = 1;
-}
-
-message JobOrder {
-    string filename = 1;
-    string job_hash = 2;
-    bytes job = 3;
-    bool is_reducer = 4;
-    repeated string chunks = 5;
-    repeated string reducer_nodes = 6;
-    int64 numMappers = 7;
-}
-
 /* ------------ Node messages ------------ */
 message JoinReq {
     string node_addr = 1;
@@ -131,6 +116,21 @@ message KeyValueNotice {
 message KeyValueRes {
     bool ok = 1;
     string message = 2;
+}
+
+/* ------------- RM messages ------------- */
+message MapReq {
+    string filename = 1;
+}
+
+message JobOrder {
+    string filename = 1;
+    string job_hash = 2;
+    bytes job = 3;
+    bool is_reducer = 4;
+    repeated string chunks = 5;
+    repeated string reducer_nodes = 6;
+    int64 numMappers = 7;
 }
 
 /* ------------ Client messages ------------ */
@@ -191,18 +191,18 @@ message Wrapper {
         DeleteRes delete_res = 9;
         MapRes map_res = 10;
 
-        MapReq map_req = 11;
-        JobOrder job_order = 12;
+        JoinReq join_req = 11;
+        Heartbeat heartbeat = 12;
+        NStorageRes n_storage_res = 13;
+        NRetrievalRes n_retrieval_res = 14;
+        OrderRes order_res = 15;
+        ReplicaReq replica_req = 16;
+        JobStatus job_status = 17;
+        KeyValueNotice key_value_notice = 18;
+        KeyValueRes key_value_res = 19;
 
-        JoinReq join_req = 13;
-        Heartbeat heartbeat = 14;
-        NStorageRes n_storage_res = 15;
-        NRetrievalRes n_retrieval_res = 16;
-        OrderRes order_res = 17;
-        ReplicaReq replica_req = 18;
-        JobStatus job_status = 19;
-        KeyValueNotice key_value_notice = 20;
-        KeyValueRes key_value_res = 21;
+        MapReq map_req = 20;
+        JobOrder job_order = 21;
 
         CStorageReq c_storage_req = 22;
         NStorageReq n_storage_req = 23;

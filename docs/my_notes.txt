@@ -1,3 +1,5 @@
+Project Specification: https://www.cs.usfca.edu/~mmalensek/cs677/assignments/project-2.html
+
 Controller messages:
     JoinRes
     KillNode
@@ -25,6 +27,10 @@ Node Messages:
     Checksum
     ChecksumRes
 
+Yarm Messages:
+    MapReq
+    JobOrder
+
 Client Messages:
     StorageReq x2
     RetrievalReq x2
@@ -32,10 +38,6 @@ Client Messages:
     NodeReq
     DeleteReq
     Checksum
-
-Yarm Messages:
-    MapReq
-    JobOrder
 
 Current Features:
 - Storage nodes can join controller
@@ -47,6 +49,10 @@ Current Features:
 - Client can store, retrieve and delete files
 - Contoller can request new copies of chunks on a dead node
 - Storage nodes can request new copies of corrupted chunks
+- Client can perform content aware chunk partitioning
+- Resource Manager can submit jobs and monitoring
+- Resource Manger can properly balance the load across computation nodes
+- Storage nodes can map, shuffle, and reduce
 
 ilovecats.txt :	chunk01 : {node03, node02, node01}
                           chunk02 : {node02, node03, node04}
@@ -60,20 +66,6 @@ FAULT TOLERANCE CASES
       c) need to check that hasvnt been in pending since timeout (to combat against reps that never made it)
 3) file is corrupted, node requests a replica from controller who gives it a buddy to get it from
 
-Limitations and Issues:
-- Not reading to the closest newline, just going to the next newline character
-- Key, value pairs are string, maybe better to have them as bytes?
-- Should use serialization for the temp files
-- Not verifiying a checksum of the sent so file
-- No error handling when requesting job for not fully stored file
-- Sending pair files over channel is bad bc then it reaaally limits us to one job at a time
-- Can only run one job at a time
-
-Comments:
-- Making it content aware with current implementation because i relied on the
-  offset in the file name. Which made this a very challenging problem if i 
-  wanted to treat data as a stream and not read it in twice.
-
 Test commands:
 ~/go/bin/client orion05:24000 put ilovecats.txt 0.00004
 ~/go/bin/yarm orion05:24000 dfs/word_count/word_count.so ilovecats.txt
@@ -86,14 +78,3 @@ Test commands:
 go build -buildmode=plugin word_count.go
 go build -buildmode=plugin log_analyzer.go
 go build -buildmode=plugin sort.go
-
-Iffy:
-- Storing file back into database could be better
-- Wait, we don't need to close the conns right?
-- In sort job, filter out the low number lines bc otherwise
-  error in reduce phase: bufio.Scanner: token too long
-
-Create other temp files and append to those
-So we get the four file from the context stuff
-Sort them and send them over
-Okay to let the reducer know hey im a reducer and there are 4 mappers
