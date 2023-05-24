@@ -1,4 +1,6 @@
-Project Specification: https://www.cs.usfca.edu/~mmalensek/cs677/assignments/project-2.html
+Project Specifications: 
+    https://www.cs.usfca.edu/~mmalensek/cs677/assignments/project-1.html
+    https://www.cs.usfca.edu/~mmalensek/cs677/assignments/project-2.html
 
 Controller messages:
     JoinRes
