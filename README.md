@@ -82,4 +82,3 @@ The resource manager yarm acts as a secondary client and submits jobs to ber per
 - No error handling when requesting job for not fully stored file
 - Can only run one job at a time
 - In sort job, filter out the low number lines bc otherwise: `error in reduce phase: bufio.Scanner: token too long`
-  
