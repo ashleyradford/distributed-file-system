@@ -64,8 +64,8 @@ Start and Stop Cluster: inside root directory
 
 ## Network Topology
 Follows a hub-and-spoke model where the controller listens for pings from active storage nodes and records their latest heartbeats.<br>
-See [design details](https://github.com/usf-cs677-sp23/P2-ashley/blob/main/docs/dfs_design.md).
-<img src="https://github.com/usf-cs677-sp23/P2-ashley/blob/main/docs/dfs_design.png" width=90% height=90%>
+See [design details](https://github.com/ashleyradford/distributed-file-system/blob/main/docs/dfs_design.md).
+<img src="https://github.com/ashleyradford/distributed-file-system/blob/main/docs/dfs_design.png" width=90% height=90%>
 
 ## MapReduce Computation
 The resource manager yarm acts as a secondary client and submits jobs to ber performed on already stored files.
