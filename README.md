@@ -6,10 +6,10 @@ A DFS that supports multiple storage nodes and MapReduce jobs. Key features incl
 - Interoperability: uses Google Protocol Buffers to serialize messages.
 - Fault tolerance: detects and withstands concurrent storage node failures all the way down to the minimum replication level (3) provided that there is enough time in between failures to re-replicate data.
 - Data Integrity: able to recover corrupted files.
-- Datatype-aware chunk partitioning
-- Job submission and monitoring, including pushing computations to nodes for data locality
-- Load balancing across computation nodes
-- The Map, Shuffle, and Reduce phases of computation
+- Datatype-aware chunk partitioning: if the file is text-based then it splits on the line boundaries rather than the byte size.
+- Job submission and monitoring, including pushing computations to nodes for data locality.
+- Load balancing across computation nodes.
+- The Map, Shuffle, and Reduce phases of computation.
 
 ## Build
 Proto File: inside dfs directory<br>
@@ -81,17 +81,17 @@ The resource manager yarm acts as a secondary client and submits jobs to ber per
 - [ ] Clean up msg names in message_handler, and check that all response names are correctly named.
 - [ ] Reorganize protobuf messages, some messages can be grouped and we can split into 3 different receive groups.
 - [ ] Consider the case when a node goes down for just a few seconds, but then gets back up and running (didn't miss the hb checks), should the program always join at the beg or just send a HB initially?
-- [ ] MessageHandler already closes out conn
-- [ ] Store reduced files through storage node communication with controller instead of calling on client
-- [ ] Update resource manager to act more like a manager and not a secondary client
-- [ ] Key, value pairs are strings, maybe better to have them as bytes
-- [ ] Should use serialization for the temp files
+- [ ] MessageHandler already closes out conn.
+- [ ] Store reduced files through storage node communication with controller instead of calling on client.
+- [ ] Update resource manager to act more like a manager and not a secondary client.
+- [ ] Key, value pairs are strings, maybe better to have them as bytes.
+- [ ] Should use serialization for the temp files.
 
 ## Limitations
 - When the controller receives a storage request, it only checks if the file is able to fit into the cluster as a whole, it doesn't check that there is a node big enough for each chunk. For example, if we have a chunk that is size 30MB but we only have 12 3MB nodes available, it could be stuck in an infinite loop trying to find a chunk that is big enough since we only checked the overall space.
 - Each replica is required to be on a different storage node, if the number of nodes drops below replication level this becomes a problem. Currently just logging this issue.
 - Currently, when a storage node detects corruption and requests a copy, the controller responds with a replica address (one that has a copy). If the copy on this node is corrupted, the request will be sent out again from this node. But the replica node is picked at random, so there is a chance that there is an excess amount of communication if a corrupted node is picked multiple times. This issue is amplified if all copies are corrupt as it will become an infinite loop that eventually crashes the nodes. Responding with a list of replica nodes to iterate through would require a bit of refactoring as it results in some messy recursion as is.
-- Not verifying a checksum of the sent so file
-- No error handling when requesting job for not fully stored file
-- Can only run one job at a time
-- In sort job, filter out the low number lines bc otherwise: `error in reduce phase: bufio.Scanner: token too long`
+- Not verifying a checksum of the sent so file.
+- No error handling when requesting job for not fully stored file.
+- Can only run one job at a time.
+- In sort job, filter out the low number lines bc otherwise: `error in reduce phase: bufio.Scanner: token too long`.
